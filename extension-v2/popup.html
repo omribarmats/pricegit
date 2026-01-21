@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PriceGit</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <!-- <img src="icon.png" alt="PriceGit" class="header-icon"> -->
+      <div class="header-text">
+        <h1 class="header-title">🪙 PriceGit</h1>
+        <p class="header-subtitle">Shared Price Knowledge</p>
+      </div>
+      <button id="capture-price-btn" class="capture-price-btn">Capture price</button>
+    </div>
+    
+    <!-- Search Bar -->
+    <div class="search-container">
+      <input 
+        type="text" 
+        id="search-input" 
+        placeholder="Search for any product..."
+        autocomplete="off"
+      >
+      <button id="clear-btn" class="clear-btn" style="display: none;">×</button>
+      
+      <!-- Dropdown for search results -->
+      <div id="search-dropdown" class="search-dropdown" style="display: none;"></div>
+      
+      <div class="location-info-container">
+        <span>Showing final prices for</span>
+        <span class="location-text" id="location-text">Loading...</span>
+        <span>including taxes and shipping.</span>
+        <button id="edit-location-btn" class="edit-location-link">Edit address</button>
+      </div>
+    </div>
+
+    <!-- Results Area -->
+    <div id="results-container" class="results-container">
+      <div id="empty-state" class="empty-state">
+        <p>Search for a product to see price alternatives</p>
+      </div>
+
+      <!-- Product results will be displayed here -->
+      <div id="product-results" style="display: none;">
+        <h2 id="product-name" class="product-name"></h2>
+
+        <!-- Filters -->
+        <div class="filters-container">
+          <!-- Location Filter -->
+          <div class="filter-dropdown" id="location-filter-dropdown">
+            <button class="filter-btn" id="location-filter-btn">
+              <span>📍 Worldwide</span>
+              <svg class="filter-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 9l-7 7-7-7"/>
+              </svg>
+            </button>
+            <div class="filter-menu" id="location-filter-menu" style="display: none;">
+              <div class="filter-menu-header">
+                <span class="filter-menu-title">Capture Location</span>
+                <input type="text" id="location-filter-search" class="filter-search" placeholder="Search locations...">
+              </div>
+              <div class="filter-menu-options" id="location-filter-options">
+                <!-- Options populated by JS -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Fulfillment Filter -->
+          <div class="filter-dropdown" id="fulfillment-filter-dropdown">
+            <button class="filter-btn" id="fulfillment-filter-btn">
+              <span>All types</span>
+              <svg class="filter-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 9l-7 7-7-7"/>
+              </svg>
+            </button>
+            <div class="filter-menu" id="fulfillment-filter-menu" style="display: none;">
+              <div class="filter-menu-header">
+                <span class="filter-menu-title">Fulfillment type</span>
+              </div>
+              <div class="filter-menu-options" id="fulfillment-filter-options">
+                <div class="filter-option" data-value="">
+                  <span>All types</span>
+                  <svg class="filter-check" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                  </svg>
+                </div>
+                <div class="filter-option" data-value="delivery">
+                  <span>Delivery</span>
+                  <svg class="filter-check" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                  </svg>
+                </div>
+                <div class="filter-option" data-value="store">
+                  <span>Store</span>
+                  <svg class="filter-check" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                  </svg>
+                </div>
+                <div class="filter-option" data-value="person">
+                  <span>Person</span>
+                  <svg class="filter-check" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Price Table -->
+        <div class="price-table-container">
+          <!-- Table Header -->
+          <div id="price-table-header" class="price-table-header">
+            Prices committed by the community (<span id="price-count">0</span>)
+          </div>
+          <!-- Price List -->
+          <div id="alternatives-list" class="alternatives-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Location Modal -->
+  <div id="location-modal" class="location-modal" style="display: none;">
+    <div class="modal-overlay"></div>
+    <div class="modal-content-wrapper">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Edit Location</h3>
+          <button id="close-modal-btn" class="close-modal-btn">×</button>
+        </div>
+        <div class="modal-body">
+          <label for="location-search" class="modal-label">Search for your address or city</label>
+          <input 
+            type="text" 
+            id="location-search" 
+            placeholder="e.g., Tel Aviv, Israel"
+            autocomplete="off"
+          >
+          <div id="location-suggestions" class="location-suggestions" style="display: none;"></div>
+          <div id="location-error" class="location-error" style="display: none;"></div>
+          <div id="selected-location-display" class="selected-location-display" style="display: none;">
+            <div class="selected-label">Selected Location:</div>
+            <div id="selected-location-text" class="selected-location-text"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="cancel-location-btn" class="btn-cancel">Cancel</button>
+          <button id="save-location-btn" class="btn-save" disabled>Save Location</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

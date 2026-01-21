@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Price Commons</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <div class="title-row">
+        <span class="emoji">🪙</span>
+        <h1>Price Commons</h1>
+    
+      </div>
+      <p class="tagline">Shared Price Knowledge</p>
+
+    </div>
+
+    <!-- Search Bar -->
+    <div class="search-container">
+      <input 
+        type="text" 
+        id="search-input" 
+        placeholder="Search for any product..."
+        autocomplete="off"
+      >
+      <button id="clear-btn" class="clear-btn" style="display: none;">×</button>
+      
+      <!-- Dropdown for search results -->
+      <div id="search-dropdown" class="search-dropdown" style="display: none;">
+        <!-- Populated by JS -->
+      </div>
+            <div class="location-row align-left flex items-left justify-left">
+        <p class="location-info" id="location-info">Detecting location...</p>
+        <button id="edit-location-btn" class="edit-location-btn">Edit</button>
+      </div>
+    </div>
+
+    <!-- Results Area -->
+    <div id="results-container" class="results-container">
+      <div id="empty-state" class="empty-state">
+        <p>Search for a product to see price alternatives</p>
+      </div>
+
+      <!-- Product alternatives will be displayed here -->
+      <div id="product-results" style="display: none;">
+        <h2 id="product-name" class="product-name"></h2>
+        <div id="alternatives-list" class="alternatives-list">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Location Modal -->
+  <div id="location-modal" class="location-modal" style="display: none;">
+    <div class="modal-overlay"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Edit Location</h3>
+        <button id="close-modal-btn" class="close-modal-btn">×</button>
+      </div>
+      <div class="modal-body">
+        <label for="location-search">Search for address or city</label>
+        <input 
+          type="text" 
+          id="location-search" 
+          placeholder="e.g., Tel Aviv, Israel or 123 Main St, New York"
+          autocomplete="off"
+        >
+        <div id="location-suggestions" class="location-suggestions" style="display: none;">
+          <!-- Populated by JS -->
+        </div>
+        <div id="location-error" class="location-error" style="display: none;">
+          <!-- Error messages -->
+        </div>
+        <div id="selected-location-display" class="selected-location-display" style="display: none;">
+          <div class="selected-label">Selected Location:</div>
+          <div id="selected-location-text" class="selected-location-text"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="save-location-btn" class="btn-save" disabled>Save Location</button>
+        <button id="cancel-location-btn" class="btn-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
