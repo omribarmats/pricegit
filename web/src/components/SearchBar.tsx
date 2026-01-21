@@ -80,11 +80,12 @@ export function SearchBar({
       // Map products and mark which have available stores for user's location
       const productsWithAvailability = (data as unknown as Product[]).map(
         (product) => {
-          const availablePriceHistory = product.price_history?.filter((ph) =>
-            ph.stores
-              ? canStoreServeUser(ph.stores, userLocation, ph.fulfillment_type)
-              : false
-          );
+          const availablePriceHistory = product.price_history?.filter((ph) => {
+            const store = Array.isArray(ph.stores) ? ph.stores[0] : ph.stores;
+            return store
+              ? canStoreServeUser(store, userLocation, ph.fulfillment_type)
+              : false;
+          });
 
           return {
             ...product,

@@ -17,6 +17,7 @@ interface PendingPrice {
   fulfillment_type: string;
   product_type: string;
   is_final_price: boolean;
+  screenshot_url: string | null;
   products: {
     id: string;
     name: string;
@@ -79,6 +80,7 @@ export default function ModeratePage() {
           fulfillment_type,
           product_type,
           is_final_price,
+          screenshot_url,
           submitted_by,
           products (
             id,
@@ -359,6 +361,25 @@ export default function ModeratePage() {
                         </>
                       )}
                     </div>
+
+                    {/* Screenshot for verification */}
+                    {price.screenshot_url && (
+                      <div className="mt-4">
+                        <span className="text-sm text-gray-600 font-medium">Screenshot proof:</span>
+                        <a
+                          href={price.screenshot_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block mt-2"
+                        >
+                          <img
+                            src={price.screenshot_url}
+                            alt="Price screenshot"
+                            className="max-w-md max-h-64 object-contain rounded border border-gray-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                          />
+                        </a>
+                      </div>
+                    )}
                   </div>
 
                   {/* Actions */}

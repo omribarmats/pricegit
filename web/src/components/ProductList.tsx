@@ -25,6 +25,10 @@ interface LatestPrice {
   source_url: string;
   created_at: string;
   store_id: string;
+  condition?: string;
+  fulfillment_type?: string;
+  product_type?: string;
+  currency?: string;
   stores?: Product["price_history"][0]["stores"];
 }
 
@@ -108,6 +112,10 @@ function getLatestPricePerStore(
         source_url: history.source_url,
         created_at: history.created_at,
         store_id: history.store_id,
+        condition: history.condition,
+        fulfillment_type: history.fulfillment_type,
+        product_type: history.product_type,
+        currency: history.currency,
         stores: history.stores,
       });
     }
@@ -115,8 +123,8 @@ function getLatestPricePerStore(
 
   return Array.from(storeMap.values()).sort((a, b) => {
     // Priority order: new items first, then used items (all private sellers) at the end
-    const aCondition = a.stores?.condition || "new";
-    const bCondition = b.stores?.condition || "new";
+    const aCondition = a.condition || "new";
+    const bCondition = b.condition || "new";
 
     // 1. New items always come first, used items at the end
     if (aCondition !== bCondition) {
@@ -134,10 +142,11 @@ function getFulfillmentBadge(
 ): { icon: ReactElement; text: string; color: string } | null {
   if (!latest.stores) return null;
 
-  const store = latest.stores;
+  const store = Array.isArray(latest.stores) ? latest.stores[0] : latest.stores;
+  if (!store) return null;
 
   // Second-hand items (all from private sellers)
-  if (store.condition === "used") {
+  if (latest.condition === "used") {
     if (
       userLocation &&
       store.latitude &&
@@ -165,7 +174,7 @@ function getFulfillmentBadge(
   }
 
   // Digital products
-  if (store.product_type === "digital") {
+  if (latest.product_type === "digital") {
     return {
       icon: <span>🛬</span>,
       text: "Digital",
@@ -174,7 +183,7 @@ function getFulfillmentBadge(
   }
 
   // Physical products - Store only
-  if (store.fulfillment_type === "store") {
+  if (latest.fulfillment_type === "store") {
     if (
       userLocation &&
       store.latitude &&
@@ -202,7 +211,7 @@ function getFulfillmentBadge(
   }
 
   // Physical products - Delivery
-  if (store.fulfillment_type === "delivery") {
+  if (latest.fulfillment_type === "delivery") {
     switch (store.shipping_scope) {
       case "local":
       case "national":
@@ -288,28 +297,28 @@ export function ProductList({
     return prices.filter((price) => {
       if (!price.stores) return true;
 
-      const store = price.stores;
+      const store = Array.isArray(price.stores) ? price.stores[0] : price.stores;
 
       // Second-hand (used items)
-      if (store.condition === "used") {
+      if (price.condition === "used") {
         return filters.showSecondHand;
       }
 
       // Digital products (always international/global)
-      if (store.product_type === "digital") {
+      if (price.product_type === "digital") {
         return filters.showInternational;
       }
 
       // Physical products
-      if (store.product_type === "physical") {
+      if (price.product_type === "physical") {
         // Store only
-        if (store.fulfillment_type === "store") {
+        if (price.fulfillment_type === "store") {
           return filters.showInStore;
         }
 
         // Delivery
-        if (store.fulfillment_type === "delivery") {
-          const scope = store.shipping_scope;
+        if (price.fulfillment_type === "delivery") {
+          const scope = store?.shipping_scope;
 
           // International/global delivery
           if (scope === "international" || scope === "global") {
@@ -334,7 +343,8 @@ export function ProductList({
           // Filter by user's country first (regional pricing)
           const regionalPrices = (product.price_history || []).filter((ph) => {
             // For global_fixed stores, show all prices
-            if (ph.stores?.pricing_model === "global_fixed") {
+            const store = Array.isArray(ph.stores) ? ph.stores[0] : ph.stores;
+            if (store?.pricing_model === "global_fixed") {
               return true;
             }
             // For regional_variable stores, only show prices captured in user's country
@@ -429,7 +439,7 @@ export function ProductList({
                             >
                               <PriceDisplay
                                 price={latest.price}
-                                storeCurrency={latest.stores?.currency || "USD"}
+                                storeCurrency={latest.currency || "USD"}
                                 userCurrency={getCurrencyForCountry(
                                   userLocation?.country || "United States"
                                 )}
@@ -439,7 +449,7 @@ export function ProductList({
                             <span className="text-gray-700 text-sm">
                               <PriceDisplay
                                 price={latest.price}
-                                storeCurrency={latest.stores?.currency || "USD"}
+                                storeCurrency={latest.currency || "USD"}
                                 userCurrency={getCurrencyForCountry(
                                   userLocation?.country || "United States"
                                 )}

@@ -6,6 +6,17 @@ let captureMode = false;
 let capturedPrice = null;
 let formData = {};
 
+// Screenshot state
+let screenshotDataUrl = null;
+let capturedElement = null;
+
+// Blur tool state
+let blurRectangles = [];
+let isDrawingBlur = false;
+let blurStartX = 0;
+let blurStartY = 0;
+let originalScreenshotImage = null;
+
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("Message received:", request);
@@ -68,7 +79,7 @@ function handlePriceHoverOut(e) {
 }
 
 // Handle price click
-function handlePriceClick(e) {
+async function handlePriceClick(e) {
   console.log("Click detected on:", e.target);
 
   if (!captureMode) {
@@ -85,6 +96,9 @@ function handlePriceClick(e) {
     return;
   }
 
+  e.preventDefault();
+  e.stopPropagation();
+
   const text = e.target.textContent.trim();
   console.log("Clicked element text:", text);
 
@@ -96,25 +110,48 @@ function handlePriceClick(e) {
     capturedPrice = priceMatch[0].replace(/,/g, "");
     console.log("Captured price:", capturedPrice);
 
-    // Remove the blue outline from the clicked element
-    e.target.style.outline = "";
-    e.target.style.outlineOffset = "";
+    // Store reference to captured element
+    capturedElement = e.target;
 
-    // Remove instruction overlay
+    // KEEP the blue outline visible for screenshot
+    // The outline is already applied from hover
+
+    // Remove instruction overlay but keep highlight
     removeInstructionOverlay();
 
-    // Stop capture mode
+    // Stop capture mode listeners (but keep highlight)
     captureMode = false;
     document.body.style.cursor = "default";
     document.removeEventListener("click", handlePriceClick, true);
     document.removeEventListener("mouseover", handlePriceHover, true);
     document.removeEventListener("mouseout", handlePriceHoverOut, true);
 
+    // Capture screenshot with element highlighted
+    try {
+      console.log("Requesting screenshot...");
+      const response = await chrome.runtime.sendMessage({ action: "captureScreenshot" });
+      if (response.success) {
+        screenshotDataUrl = response.dataUrl;
+        console.log("Screenshot captured successfully");
+      } else {
+        console.error("Screenshot capture failed:", response.error);
+      }
+    } catch (error) {
+      console.error("Screenshot capture error:", error);
+      // Continue without screenshot - it's optional
+    }
+
+    // NOW remove the highlight
+    if (capturedElement) {
+      capturedElement.style.outline = "";
+      capturedElement.style.outlineOffset = "";
+    }
+
     // Load form data from storage or initialize
-    loadFormData().then(() => {
-      // Show form modal
-      showFormModal();
-    });
+    await loadFormData();
+
+    // Show form modal
+    showFormModal();
   }
 }
 
@@ -222,11 +259,11 @@ function generateModalHTML() {
       `${formData.location.city}, ${formData.location.country}`
     : "Not set";
 
-  const truncatedUrl = truncateUrl(formData.productUrl);
+  const hasScreenshot = !!screenshotDataUrl;
 
   return `
     <div class="pc-modal-overlay">
-      <div class="pc-modal-content">
+      <div class="pc-modal-content ${hasScreenshot ? 'pc-modal-wide' : ''}">
         <div class="pc-modal-header">
           <img src="${chrome.runtime.getURL(
             "icon.png"
@@ -237,49 +274,83 @@ function generateModalHTML() {
           </div>
           <button id="pc-close-modal" class="pc-close-btn">×</button>
         </div>
-        
-        <div class="pc-modal-body">
-          <div class="pc-form-group">
-            <label>Final Price</label>
-            <div class="pc-price-currency-row">
-              <div class="pc-price-display">
-                <input type="text" id="pc-price" value="${
-                  formData.price || ""
-                }" readonly disabled>
-                <button id="pc-recapture" class="pc-recapture-btn" title="Recapture price">🖱️</button>
+
+        <div class="pc-modal-body ${hasScreenshot ? 'pc-modal-body-split' : ''}">
+          ${hasScreenshot ? `
+          <!-- Screenshot Panel (Left) -->
+          <div class="pc-screenshot-panel">
+            <div class="pc-screenshot-header">
+              <span>Screenshot</span>
+              <div class="pc-screenshot-tools">
+                <button id="pc-blur-tool" class="pc-tool-btn pc-tool-active" title="Draw blur rectangle">
+                  Blur Tool
+                </button>
+                <button id="pc-undo-blur" class="pc-tool-btn" title="Undo last blur">
+                  Undo
+                </button>
+                <button id="pc-clear-blurs" class="pc-tool-btn" title="Clear all blurs">
+                  Clear
+                </button>
               </div>
-              <select id="pc-currency" class="pc-currency-select">
-                ${generateCurrencyOptions()}
-              </select>
             </div>
-          </div>
-          
-          <div class="pc-form-group">
-            <label>Product</label>
-            <div class="pc-search-container">
-              <input type="text" id="pc-product-name" placeholder="Search for product..." value="${
-                formData.productName
-              }" autocomplete="off">
-              <div id="pc-product-dropdown" class="pc-dropdown"></div>
+            <div class="pc-screenshot-container">
+              <canvas id="pc-screenshot-canvas"></canvas>
             </div>
+            <p class="pc-screenshot-hint">Draw rectangles to blur sensitive information</p>
           </div>
-          
-          <div class="pc-form-group">
-            <label>Store name</label>
-            <input type="text" id="pc-store-name" value="${
-              formData.storeName
-            }" readonly disabled>
-          </div>
-          
-          <div class="pc-form-group">
-            <label>Shipping Address</label>
-            <div class="pc-location-display">
-              <span id="pc-location-text">${location}</span>
-              <button id="pc-edit-location" class="pc-edit-btn">Edit</button>
+          ` : ''}
+
+          <!-- Form Panel (Right or Full) -->
+          <div class="pc-form-panel">
+            <div class="pc-form-group">
+              <label>Price</label>
+              <div class="pc-price-currency-row">
+                <div class="pc-price-display">
+                  <input type="text" id="pc-price" value="${
+                    formData.price || ""
+                  }" readonly disabled>
+                  <button id="pc-recapture" class="pc-recapture-btn" title="Recapture price">🖱️</button>
+                </div>
+                <select id="pc-currency" class="pc-currency-select">
+                  ${generateCurrencyOptions()}
+                </select>
+              </div>
+            </div>
+
+            <div class="pc-form-group">
+              <label>Product</label>
+              <div class="pc-search-container">
+                <input type="text" id="pc-product-name" placeholder="Search for product..." value="${
+                  formData.productName || ""
+                }" autocomplete="off">
+                <div id="pc-product-dropdown" class="pc-dropdown"></div>
+              </div>
+            </div>
+
+            <div class="pc-form-group">
+              <label class="pc-toggle-label">
+                <input type="checkbox" id="pc-is-final-price" ${formData.isFinalPrice ? 'checked' : ''}>
+                <span>This is the final price (includes tax, shipping, fees)</span>
+              </label>
+            </div>
+
+            <div class="pc-form-group">
+              <label>Store name</label>
+              <input type="text" id="pc-store-name" value="${
+                formData.storeName || ""
+              }" readonly disabled>
+            </div>
+
+            <div class="pc-form-group">
+              <label>Shipping Address</label>
+              <div class="pc-location-display">
+                <span id="pc-location-text">${location}</span>
+                <button id="pc-edit-location" class="pc-edit-btn">Edit</button>
+              </div>
             </div>
           </div>
         </div>
-        
+
         <div class="pc-modal-footer">
           <button id="pc-submit" class="pc-submit-btn">Submit</button>
         </div>
@@ -382,6 +453,10 @@ function attachModalEventListeners() {
 
   // Recapture price
   document.getElementById("pc-recapture").addEventListener("click", () => {
+    // Reset screenshot state when recapturing
+    screenshotDataUrl = null;
+    blurRectangles = [];
+    originalScreenshotImage = null;
     closeModal();
     startPriceCapture();
   });
@@ -389,11 +464,30 @@ function attachModalEventListeners() {
   // Submit
   document.getElementById("pc-submit").addEventListener("click", submitPrice);
 
-  // URL change
-  document.getElementById("pc-product-url").addEventListener("input", (e) => {
-    formData.productUrl = e.target.value;
-    saveFormData();
-  });
+  // is_final_price toggle
+  const finalPriceCheckbox = document.getElementById("pc-is-final-price");
+  if (finalPriceCheckbox) {
+    finalPriceCheckbox.addEventListener("change", (e) => {
+      formData.isFinalPrice = e.target.checked;
+      saveFormData();
+    });
+  }
+
+  // Screenshot tools (if screenshot panel exists)
+  const undoBtn = document.getElementById("pc-undo-blur");
+  const clearBtn = document.getElementById("pc-clear-blurs");
+
+  if (undoBtn) {
+    undoBtn.addEventListener("click", undoLastBlur);
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener("click", clearAllBlurs);
+  }
+
+  // Initialize canvas if screenshot exists
+  if (screenshotDataUrl) {
+    initializeScreenshotCanvas();
+  }
 }
 
 // Search products
@@ -711,6 +805,47 @@ async function submitPrice() {
   submitBtn.textContent = "Submitting...";
 
   try {
+    // Get auth token
+    const authResult = await chrome.storage.local.get(["authToken"]);
+    const authToken = authResult.authToken;
+
+    let uploadedScreenshotUrl = null;
+
+    // Upload screenshot if available
+    if (screenshotDataUrl) {
+      submitBtn.textContent = "Uploading screenshot...";
+
+      const processedScreenshot = getProcessedScreenshotDataUrl();
+
+      if (processedScreenshot) {
+        try {
+          const uploadResult = await chrome.runtime.sendMessage({
+            action: "fetchAPI",
+            url: "http://localhost:3000/api/upload-screenshot",
+            options: {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(authToken ? { "Authorization": `Bearer ${authToken}` } : {}),
+              },
+              body: JSON.stringify({ imageDataUrl: processedScreenshot }),
+            },
+          });
+
+          if (uploadResult.success && uploadResult.data.success) {
+            uploadedScreenshotUrl = uploadResult.data.screenshotUrl;
+            console.log("Screenshot uploaded:", uploadedScreenshotUrl);
+          } else {
+            console.warn("Screenshot upload failed, continuing without screenshot:", uploadResult);
+          }
+        } catch (uploadError) {
+          console.warn("Screenshot upload error, continuing without screenshot:", uploadError);
+        }
+      }
+    }
+
+    submitBtn.textContent = "Saving price...";
+
     const payload = {
       productName: formData.productName,
       productId: formData.productId,
@@ -719,6 +854,8 @@ async function submitPrice() {
       currency: formData.currency,
       url: formData.productUrl,
       location: formData.location,
+      isFinalPrice: formData.isFinalPrice || false,
+      screenshotUrl: uploadedScreenshotUrl,
     };
 
     const result = await chrome.runtime.sendMessage({
@@ -726,14 +863,20 @@ async function submitPrice() {
       url: "http://localhost:3000/api/save-price",
       options: {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(authToken ? { "Authorization": `Bearer ${authToken}` } : {}),
+        },
         body: JSON.stringify(payload),
       },
     });
 
     if (result.success && result.data.success) {
-      // Clear form data
+      // Clear form data and screenshot state
       chrome.storage.local.remove(["priceCommonsCaptureForm"]);
+      screenshotDataUrl = null;
+      blurRectangles = [];
+      originalScreenshotImage = null;
 
       // Show success message
       alert("Price submitted successfully!");
@@ -758,4 +901,190 @@ async function submitPrice() {
 function closeModal() {
   const modal = document.getElementById("price-commons-modal");
   if (modal) modal.remove();
+}
+
+// ==========================================
+// SCREENSHOT CANVAS AND BLUR TOOL FUNCTIONS
+// ==========================================
+
+// Initialize screenshot canvas
+function initializeScreenshotCanvas() {
+  const canvas = document.getElementById('pc-screenshot-canvas');
+  if (!canvas || !screenshotDataUrl) return;
+
+  const ctx = canvas.getContext('2d');
+  const img = new Image();
+
+  img.onload = function() {
+    // Store original image for redrawing
+    originalScreenshotImage = img;
+
+    // Calculate display size (fit within container, max ~400px width)
+    const maxWidth = 400;
+    const scale = Math.min(1, maxWidth / img.width);
+    canvas.width = img.width * scale;
+    canvas.height = img.height * scale;
+
+    // Store scale for coordinate conversion
+    canvas.dataset.scale = scale;
+    canvas.dataset.originalWidth = img.width;
+    canvas.dataset.originalHeight = img.height;
+
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    // Attach event listeners for blur drawing
+    attachBlurEventListeners(canvas);
+  };
+
+  img.src = screenshotDataUrl;
+}
+
+// Attach blur event listeners to canvas
+function attachBlurEventListeners(canvas) {
+  canvas.addEventListener('mousedown', startBlurDraw);
+  canvas.addEventListener('mousemove', drawBlurPreview);
+  canvas.addEventListener('mouseup', finishBlurDraw);
+  canvas.addEventListener('mouseleave', cancelBlurDraw);
+}
+
+// Start drawing blur rectangle
+function startBlurDraw(e) {
+  const canvas = e.target;
+  const rect = canvas.getBoundingClientRect();
+  isDrawingBlur = true;
+  blurStartX = e.clientX - rect.left;
+  blurStartY = e.clientY - rect.top;
+}
+
+// Draw blur preview while dragging
+function drawBlurPreview(e) {
+  if (!isDrawingBlur) return;
+
+  const canvas = e.target;
+  const rect = canvas.getBoundingClientRect();
+  const currentX = e.clientX - rect.left;
+  const currentY = e.clientY - rect.top;
+
+  // Redraw canvas with existing blurs + preview
+  redrawCanvasWithBlurs(canvas, {
+    x: Math.min(blurStartX, currentX),
+    y: Math.min(blurStartY, currentY),
+    width: Math.abs(currentX - blurStartX),
+    height: Math.abs(currentY - blurStartY),
+    isPreview: true
+  });
+}
+
+// Finish drawing blur rectangle
+function finishBlurDraw(e) {
+  if (!isDrawingBlur) return;
+
+  const canvas = e.target;
+  const rect = canvas.getBoundingClientRect();
+  const endX = e.clientX - rect.left;
+  const endY = e.clientY - rect.top;
+
+  // Only add if rectangle is meaningful (> 5px in both dimensions)
+  const width = Math.abs(endX - blurStartX);
+  const height = Math.abs(endY - blurStartY);
+
+  if (width > 5 && height > 5) {
+    blurRectangles.push({
+      x: Math.min(blurStartX, endX),
+      y: Math.min(blurStartY, endY),
+      width: width,
+      height: height
+    });
+  }
+
+  isDrawingBlur = false;
+  redrawCanvasWithBlurs(canvas);
+}
+
+// Cancel blur drawing (mouse left canvas)
+function cancelBlurDraw() {
+  isDrawingBlur = false;
+  const canvas = document.getElementById('pc-screenshot-canvas');
+  if (canvas) redrawCanvasWithBlurs(canvas);
+}
+
+// Redraw canvas with all blur rectangles
+function redrawCanvasWithBlurs(canvas, previewRect = null) {
+  if (!originalScreenshotImage) return;
+
+  const ctx = canvas.getContext('2d');
+
+  // Redraw original image
+  ctx.drawImage(originalScreenshotImage, 0, 0, canvas.width, canvas.height);
+
+  // Apply blur to each rectangle
+  const allRects = previewRect ? [...blurRectangles, previewRect] : blurRectangles;
+
+  allRects.forEach(rect => {
+    // Ensure rect is within canvas bounds
+    const x = Math.max(0, Math.floor(rect.x));
+    const y = Math.max(0, Math.floor(rect.y));
+    const w = Math.min(Math.floor(rect.width), canvas.width - x);
+    const h = Math.min(Math.floor(rect.height), canvas.height - y);
+
+    if (w <= 0 || h <= 0) return;
+
+    // Use pixelation as blur effect (canvas-friendly)
+    const pixelSize = 10;
+    const imgData = ctx.getImageData(x, y, w, h);
+
+    // Simple pixelation blur
+    for (let py = 0; py < h; py += pixelSize) {
+      for (let px = 0; px < w; px += pixelSize) {
+        const pixelIndex = (py * w + px) * 4;
+
+        // Get color from this pixel
+        const r = imgData.data[pixelIndex] || 0;
+        const g = imgData.data[pixelIndex + 1] || 0;
+        const b = imgData.data[pixelIndex + 2] || 0;
+
+        // Fill the block with this color
+        for (let by = 0; by < pixelSize && py + by < h; by++) {
+          for (let bx = 0; bx < pixelSize && px + bx < w; bx++) {
+            const idx = ((py + by) * w + (px + bx)) * 4;
+            imgData.data[idx] = r;
+            imgData.data[idx + 1] = g;
+            imgData.data[idx + 2] = b;
+          }
+        }
+      }
+    }
+
+    ctx.putImageData(imgData, x, y);
+
+    // Draw preview border if this is a preview rect
+    if (rect.isPreview) {
+      ctx.strokeStyle = '#2563eb';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+      ctx.setLineDash([]);
+    }
+  });
+}
+
+// Undo last blur rectangle
+function undoLastBlur() {
+  blurRectangles.pop();
+  const canvas = document.getElementById('pc-screenshot-canvas');
+  if (canvas) redrawCanvasWithBlurs(canvas);
+}
+
+// Clear all blur rectangles
+function clearAllBlurs() {
+  blurRectangles = [];
+  const canvas = document.getElementById('pc-screenshot-canvas');
+  if (canvas) redrawCanvasWithBlurs(canvas);
+}
+
+// Get processed screenshot data URL (with blurs applied)
+function getProcessedScreenshotDataUrl() {
+  const canvas = document.getElementById('pc-screenshot-canvas');
+  if (!canvas) return null;
+  return canvas.toDataURL('image/png');
 }

@@ -66,6 +66,7 @@ export async function POST(request: NextRequest) {
       url,
       location,
       isFinalPrice,
+      screenshotUrl,
     } = await request.json();
 
     if (!productName || !storeName || !price || !location) {
@@ -161,6 +162,7 @@ export async function POST(request: NextRequest) {
         product_type: "physical",
         currency: currency,
         is_final_price: isFinalPrice ?? false,
+        screenshot_url: screenshotUrl || null,
         submitted_by: user.id,
         status: "pending", // Requires peer review before appearing publicly
       })

@@ -95,11 +95,22 @@ export default async function UserProfilePage({ params }: PageProps) {
     .eq("submitted_by", userProfile.id)
     .order("created_at", { ascending: false });
 
+  // Transform the data to match expected types (Supabase returns arrays for joins)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const transformedPriceSubmissions = (priceSubmissions || []).map((submission: any) => ({
+    ...submission,
+    products: Array.isArray(submission.products) ? submission.products[0] : submission.products,
+    stores: Array.isArray(submission.stores) ? submission.stores[0] : submission.stores,
+    reviewed_by_user: Array.isArray(submission.reviewed_by_user)
+      ? submission.reviewed_by_user[0] || null
+      : submission.reviewed_by_user,
+  }));
+
   return (
     <UserProfileClient
       profile={profile}
       starred={starred}
-      priceSubmissions={priceSubmissions || []}
+      priceSubmissions={transformedPriceSubmissions}
     />
   );
 }
