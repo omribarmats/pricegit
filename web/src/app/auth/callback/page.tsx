@@ -1,8 +1,5 @@
 "use client";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-declare const chrome: any;
-
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 

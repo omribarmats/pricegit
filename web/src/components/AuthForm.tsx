@@ -1,7 +1,5 @@
 "use client";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-declare const chrome: any;
 
 import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
