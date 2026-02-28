@@ -1,5 +1,8 @@
 "use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+declare const chrome: any;
+
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
@@ -107,7 +110,7 @@ export default function AuthCallbackPage() {
                 refreshToken: session.refresh_token,
                 username: username,
               },
-              (response) => {
+              (response: any) => {
                 if (chrome.runtime.lastError) {
                   console.error(
                     "Error sending to extension:",
