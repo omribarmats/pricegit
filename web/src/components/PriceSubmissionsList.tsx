@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 
 interface PriceSubmission {
   id: string;
@@ -16,10 +17,10 @@ interface PriceSubmission {
   status: "pending" | "approved" | "rejected";
   reviewed_at: string | null;
   rejection_reason: string | null;
+  screenshot_url: string | null;
   products: {
     id: string;
     name: string;
-    image_url: string | null;
   };
   stores: {
     id: string;
@@ -93,17 +94,6 @@ export default function PriceSubmissionsList({
           className="bg-white border rounded-lg p-4 hover:shadow-md transition-shadow"
         >
           <div className="flex gap-4">
-            {/* Product Image */}
-            {submission.products.image_url && (
-              <div className="flex-shrink-0">
-                <img
-                  src={submission.products.image_url}
-                  alt={submission.products.name}
-                  className="w-20 h-20 object-cover rounded"
-                />
-              </div>
-            )}
-
             {/* Details */}
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between gap-2">
@@ -123,14 +113,23 @@ export default function PriceSubmissionsList({
               <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-sm">
                 <div>
                   <span className="text-gray-600">Price:</span>{" "}
-                  <span className="font-semibold">
+                  <span className="font-semibold inline-flex items-center gap-2">
+                    <span
+                      className={`h-2.5 w-2.5 rounded-full ${submission.is_final_price ? "bg-emerald-500" : "bg-amber-400"} ring-1 ring-gray-300`}
+                      role="img"
+                      aria-label={
+                        submission.is_final_price
+                          ? "Final price"
+                          : "Partial price"
+                      }
+                      title={
+                        submission.is_final_price
+                          ? "Final price"
+                          : "Partial price"
+                      }
+                    />
                     {submission.currency} {submission.price.toFixed(2)}
                   </span>
-                  {submission.is_final_price && (
-                    <span className="ml-2 text-xs bg-green-100 text-green-800 px-1.5 py-0.5 rounded">
-                      Final
-                    </span>
-                  )}
                 </div>
                 <div>
                   <span className="text-gray-600">Store:</span>{" "}

@@ -13,7 +13,7 @@ export default function SettingsPage() {
   const [usernameError, setUsernameError] = useState<string | null>(null);
   const [usernameChecking, setUsernameChecking] = useState(false);
   const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(
-    null
+    null,
   );
   const [email, setEmail] = useState("");
   const [originalEmail, setOriginalEmail] = useState("");
@@ -104,7 +104,7 @@ export default function SettingsPage() {
       const usernameRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/;
       if (!usernameRegex.test(name)) {
         setUsernameError(
-          "Username may only contain alphanumeric characters or single hyphens, and cannot begin or end with a hyphen"
+          "Username may only contain alphanumeric characters or single hyphens, and cannot begin or end with a hyphen",
         );
         setUsernameAvailable(false);
         setUsernameChecking(false);
@@ -227,7 +227,7 @@ export default function SettingsPage() {
         setOriginalCountry(country);
         setOriginalCity(city);
         setUsernameAvailable(null);
-        
+
         // Update context so changes reflect everywhere immediately
         updateUserProfile({
           username,
@@ -260,7 +260,7 @@ export default function SettingsPage() {
       setLocationLoading(true);
       try {
         const response = await fetch(
-          `/api/geocode?q=${encodeURIComponent(locationSearch)}`
+          `/api/geocode?q=${encodeURIComponent(locationSearch)}`,
         );
         const data = await response.json();
 
@@ -377,7 +377,7 @@ export default function SettingsPage() {
         setEmailError(updateError.message);
       } else {
         setEmailMessage(
-          "Verification email sent! Please check your inbox and click the confirmation link."
+          "Verification email sent! Please check your inbox and click the confirmation link.",
         );
         // Update original email to prevent re-saving
         setOriginalEmail(email);
@@ -477,6 +477,11 @@ export default function SettingsPage() {
       // Sign out (this will also delete from auth in the background)
       await supabase.auth.signOut();
 
+      // Clear extension auth from localStorage
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("priceGitExtensionAuth");
+      }
+
       // Redirect to home page
       window.location.href = "/";
     } catch (err) {
@@ -570,8 +575,8 @@ export default function SettingsPage() {
                       usernameError
                         ? "border-red-300"
                         : usernameAvailable
-                        ? "border-green-300"
-                        : "border-gray-300"
+                          ? "border-green-300"
+                          : "border-gray-300"
                     } rounded-md focus:outline-none focus:border-blue-500 text-sm`}
                     placeholder={originalUsername || "Choose a username"}
                   />
@@ -647,8 +652,8 @@ export default function SettingsPage() {
                   !usernameAvailable &&
                   username.length === 0 && (
                     <p className="mt-1.5 text-xs text-gray-600">
-                      Username may only contain alphanumeric characters or single
-                      hyphens, and cannot begin or end with a hyphen.
+                      Username may only contain alphanumeric characters or
+                      single hyphens, and cannot begin or end with a hyphen.
                     </p>
                   )}
               </div>

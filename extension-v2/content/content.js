@@ -1,379 +1,1315 @@
-// Content script for price capture functionality
+// Content script for LLM-powered price capture
+// Flow: Screenshot → Crop → Blur → LLM Analysis → Form
 
-console.log("PriceGit content script loaded");
+// Auth sync from web app localStorage (works on any domain)
+try {
+  if (!window.priceGitAuthSynced) {
+    window.priceGitAuthSynced = true;
+    const syncAuthFromLocalStorage = () => {
+      const authData = localStorage.getItem("priceGitExtensionAuth");
+      if (!authData) return;
+      const { authToken, refreshToken, username } = JSON.parse(authData);
+      if (authToken && username) {
+        try {
+          chrome.storage.local.set({ authToken, refreshToken, username });
+        } catch {
+          // Storage error — non-critical
+        }
+        chrome.runtime.sendMessage({
+          action: "setAuth",
+          authToken,
+          refreshToken,
+          username,
+        });
+      }
+    };
 
-let captureMode = false;
-let capturedPrice = null;
-let formData = {};
+    // Try immediately and retry for a short window to catch late writes
+    syncAuthFromLocalStorage();
+    let attempts = 0;
+    const interval = setInterval(() => {
+      syncAuthFromLocalStorage();
+      attempts += 1;
+      if (attempts >= 5) clearInterval(interval);
+    }, 1000);
+  }
+} catch {
+  // Auth sync error — non-critical
+}
 
-// Screenshot state
+// Listen for auth data posted from the web app
+window.addEventListener("message", (event) => {
+  if (!event?.data || event.data.type !== "PRICEGIT_AUTH") return;
+  const { authToken, refreshToken, username } = event.data;
+  if (authToken && username) {
+    try {
+      chrome.storage.local.set({ authToken, refreshToken, username });
+    } catch {
+      // Storage error — non-critical
+    }
+    chrome.runtime.sendMessage({
+      action: "setAuth",
+      authToken,
+      refreshToken,
+      username,
+    });
+  }
+});
+
+// State
 let screenshotDataUrl = null;
-let capturedElement = null;
+let croppedDataUrl = null;
+let formData = {};
+let userLocation = null;
+let locationPromise = null; // Background location fetch
+
+// Crop selection state
+let cropRect = { x: 100, y: 100, width: 400, height: 300 };
+let isDragging = false;
+let isResizing = false;
+let resizeHandle = null;
+let dragStartX = 0;
+let dragStartY = 0;
+let initialCropRect = null;
 
 // Blur tool state
 let blurRectangles = [];
 let isDrawingBlur = false;
 let blurStartX = 0;
 let blurStartY = 0;
-let originalScreenshotImage = null;
+let blurCanvasImage = null;
 
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log("Message received:", request);
-  if (request.action === "startPriceCapture") {
-    console.log("Starting price capture");
-    startPriceCapture();
+  if (
+    request.action === "startPriceCapture" ||
+    request.action === "startLLMCapture"
+  ) {
+    startLLMCapture();
     sendResponse({ success: true });
-  } else if (request.action === "openPriceModal") {
-    console.log("Opening price modal directly");
-    loadFormData().then(() => {
-      showFormModal();
-      sendResponse({ success: true });
-    });
-    return true; // Keep channel open for async response
   }
+
+  if (request.action === "showInstructionPopup") {
+    showInstructionPopup();
+    sendResponse({ success: true });
+  }
+
   return true;
 });
 
-// Start price capture mode
-function startPriceCapture() {
-  console.log("Price capture mode activated");
-  captureMode = true;
-  document.body.style.cursor = "crosshair";
-
-  // Add click listener for price capture
-  document.addEventListener("click", handlePriceClick, true);
-
-  // Add hover listener for highlighting
-  document.addEventListener("mouseover", handlePriceHover, true);
-  document.addEventListener("mouseout", handlePriceHoverOut, true);
-
-  // Show instruction overlay
-  showInstructionOverlay();
-  console.log("Instruction overlay shown, listeners attached");
-}
-
-// Handle hover for highlighting
-function handlePriceHover(e) {
-  if (!captureMode) return;
-
-  // Don't highlight our own UI
-  if (
-    e.target.closest("#price-commons-instruction") ||
-    e.target.closest("#price-commons-modal")
-  ) {
-    return;
+function showInstructionPopup() {
+  // Remove any existing popup
+  const existingPopup = document.getElementById("extension-instruction-popup");
+  if (existingPopup) {
+    existingPopup.remove();
   }
 
-  console.log("Hovering over:", e.target);
-  e.target.style.outline = "3px solid #2563eb";
-  e.target.style.outlineOffset = "2px";
-}
+  const popup = document.createElement("div");
+  popup.id = "extension-instruction-popup";
+  popup.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 20px 24px;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(102, 126, 234, 0.4);
+    z-index: 2147483647;
+    max-width: 350px;
+    font-family: system-ui, -apple-system, sans-serif;
+    animation: slideInRight 0.4s ease-out;
+  `;
 
-// Handle hover out
-function handlePriceHoverOut(e) {
-  if (!captureMode) return;
-
-  e.target.style.outline = "";
-  e.target.style.outlineOffset = "";
-}
-
-// Handle price click
-async function handlePriceClick(e) {
-  console.log("Click detected on:", e.target);
-
-  if (!captureMode) {
-    console.log("Not in capture mode, ignoring click");
-    return;
-  }
-
-  // Don't capture clicks on our own UI elements
-  if (
-    e.target.closest("#price-commons-instruction") ||
-    e.target.closest("#price-commons-modal")
-  ) {
-    console.log("Click on our own UI, ignoring");
-    return;
-  }
-
-  e.preventDefault();
-  e.stopPropagation();
-
-  const text = e.target.textContent.trim();
-  console.log("Clicked element text:", text);
-
-  // Try to extract number from text
-  const priceMatch = text.match(/[\d,]+\.?\d*/);
-  console.log("Price match result:", priceMatch);
-
-  if (priceMatch) {
-    capturedPrice = priceMatch[0].replace(/,/g, "");
-    console.log("Captured price:", capturedPrice);
-
-    // Store reference to captured element
-    capturedElement = e.target;
-
-    // KEEP the blue outline visible for screenshot
-    // The outline is already applied from hover
-
-    // Remove instruction overlay but keep highlight
-    removeInstructionOverlay();
-
-    // Stop capture mode listeners (but keep highlight)
-    captureMode = false;
-    document.body.style.cursor = "default";
-    document.removeEventListener("click", handlePriceClick, true);
-    document.removeEventListener("mouseover", handlePriceHover, true);
-    document.removeEventListener("mouseout", handlePriceHoverOut, true);
-
-    // Capture screenshot with element highlighted
-    try {
-      console.log("Requesting screenshot...");
-      const response = await chrome.runtime.sendMessage({ action: "captureScreenshot" });
-      if (response.success) {
-        screenshotDataUrl = response.dataUrl;
-        console.log("Screenshot captured successfully");
-      } else {
-        console.error("Screenshot capture failed:", response.error);
+  popup.innerHTML = `
+    <style>
+      @keyframes slideInRight {
+        from {
+          transform: translateX(400px);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
       }
-    } catch (error) {
-      console.error("Screenshot capture error:", error);
-      // Continue without screenshot - it's optional
-    }
+    </style>
+    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+      <div style="font-size: 18px; font-weight: 600;">🪙 Next Step</div>
+      <button id="close-popup-btn" style="background: none; border: none; color: white; font-size: 24px; cursor: pointer; padding: 0; line-height: 1; margin-left: 12px;">&times;</button>
+    </div>
+    <div style="font-size: 14px; line-height: 1.6; margin-bottom: 8px;">
+      Click the <strong>PriceListener extension icon (🪙)</strong> in your browser toolbar (top-right) to capture the price
+    </div>
+    <div style="font-size: 24px; text-align: center; margin-top: 8px;">
+      ☝️
+    </div>
+  `;
 
-    // NOW remove the highlight
-    if (capturedElement) {
-      capturedElement.style.outline = "";
-      capturedElement.style.outlineOffset = "";
-    }
+  document.body.appendChild(popup);
 
-    // Load form data from storage or initialize
-    await loadFormData();
-
-    // Show form modal
-    showFormModal();
-  }
-}
-
-// Load form data from localStorage
-async function loadFormData() {
-  const result = await chrome.storage.local.get(["priceCommonsCaptureForm"]);
-  const saved = result.priceCommonsCaptureForm;
-
-  if (saved) {
-    formData = saved;
-  } else {
-    formData = {
-      storeName: extractStoreName(),
-      productName: "",
-      productUrl: window.location.href,
-      location: null,
-      currency: "USD",
-      price: capturedPrice,
+  // Close button handler
+  const closeBtn = document.getElementById("close-popup-btn");
+  if (closeBtn) {
+    closeBtn.onclick = () => {
+      popup.remove();
     };
   }
 
-  // Update price with captured value
-  formData.price = capturedPrice;
-  formData.productUrl = window.location.href;
-  formData.storeName = extractStoreName();
+  // No auto-dismiss - stays until user closes it or starts capture
 }
 
-// Save form data to localStorage
-function saveFormData() {
-  chrome.storage.local.set({ priceCommonsCaptureForm: formData });
+// ==========================================
+// MAIN CAPTURE FLOW
+// ==========================================
+
+async function startLLMCapture() {
+  try {
+    // Remove instruction popup if it exists
+    const instructionPopup = document.getElementById(
+      "extension-instruction-popup",
+    );
+    if (instructionPopup) {
+      instructionPopup.remove();
+    }
+
+    // Start location fetch in background (non-blocking)
+    // Location is only needed at analyze/submit time, not for screenshot
+    locationPromise = getUserLocation()
+      .then((loc) => {
+        userLocation = loc;
+        return loc;
+      })
+      .catch(() => null); // Handle denial later at analyze time
+
+    // Capture screenshot immediately — no waiting for location
+    const response = await chrome.runtime.sendMessage({
+      action: "captureScreenshot",
+    });
+
+    if (!response.success) {
+      throw new Error(response.error || "Failed to capture screenshot");
+    }
+
+    screenshotDataUrl = response.dataUrl;
+
+    // Show crop selection
+    showCropSelection();
+  } catch (error) {
+    alert("Failed to start capture: " + error.message);
+  }
 }
 
-// Extract store name from URL
-function extractStoreName() {
-  const hostname = window.location.hostname;
-  const domain = hostname.replace("www.", "");
+// ==========================================
+// GEOLOCATION
+// ==========================================
 
-  // Get country from user location if available
-  const userLocation = JSON.parse(localStorage.getItem("userLocation") || "{}");
-  const country = userLocation.country || "";
+async function getUserLocation() {
+  // Always get fresh location (no caching - user may use VPN)
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("Geolocation not supported"));
+      return;
+    }
 
-  // Return domain with country suffix if we have country
-  if (country) {
-    return `${domain} ${country}`;
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        try {
+          // Reverse geocode to get country/city
+          const location = await reverseGeocode(latitude, longitude);
+          resolve(location);
+        } catch (error) {
+          // Fallback: return coordinates only
+          resolve({
+            latitude,
+            longitude,
+            city: "Unknown",
+            country: "Unknown",
+            fullAddress: `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
+          });
+        }
+      },
+      (error) => {
+        reject(error);
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  });
+}
+
+async function reverseGeocode(latitude, longitude) {
+  const result = await chrome.runtime.sendMessage({
+    action: "fetchAPI",
+    url: `http://localhost:3000/api/reverse-geocode?lat=${latitude}&lng=${longitude}`,
+  });
+
+  if (result.success && result.data.success) {
+    return result.data.data;
   }
 
-  return domain;
+  throw new Error("Reverse geocode failed");
 }
 
-// Show instruction overlay
-function showInstructionOverlay() {
+// ==========================================
+// CROP SELECTION
+// ==========================================
+
+function showCropSelection() {
+  // Reset crop rect to center of viewport
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  cropRect = {
+    x: Math.floor(viewportWidth * 0.2),
+    y: Math.floor(viewportHeight * 0.2),
+    width: Math.floor(viewportWidth * 0.6),
+    height: Math.floor(viewportHeight * 0.5),
+  };
+
   const overlay = document.createElement("div");
-  overlay.id = "price-commons-instruction";
+  overlay.id = "pc-crop-overlay";
   overlay.innerHTML = `
-    <div class="pc-instruction-content">
-      <p>Click on the price to capture it</p>
-      <button id="pc-cancel-capture" type="button">Cancel</button>
+    <img class="pc-crop-background" src="${screenshotDataUrl}" style="width: 100%; height: 100%; object-fit: cover; pointer-events: none;">
+    <div class="pc-crop-selection" id="pc-crop-selection">
+      <div class="pc-crop-handle pc-crop-handle-nw" data-handle="nw"></div>
+      <div class="pc-crop-handle pc-crop-handle-ne" data-handle="ne"></div>
+      <div class="pc-crop-handle pc-crop-handle-sw" data-handle="sw"></div>
+      <div class="pc-crop-handle pc-crop-handle-se" data-handle="se"></div>
+      <div class="pc-crop-handle pc-crop-handle-n" data-handle="n"></div>
+      <div class="pc-crop-handle pc-crop-handle-s" data-handle="s"></div>
+      <div class="pc-crop-handle pc-crop-handle-w" data-handle="w"></div>
+      <div class="pc-crop-handle pc-crop-handle-e" data-handle="e"></div>
+    </div>
+    <div class="pc-crop-toolbar">
+      <div class="pc-crop-instructions">
+        <span class="pc-crop-toolbar-text">Select the area to capture</span>
+        <span class="pc-crop-toolbar-tip">✅ <strong>Must show:</strong> Product name + Price breakdown (item price + shipping + taxes)</span>
+      </div>
+      <div class="pc-crop-buttons">
+        <button class="pc-crop-btn pc-crop-btn-cancel" id="pc-crop-cancel">Cancel</button>
+        <button class="pc-crop-btn pc-crop-btn-continue" id="pc-crop-continue">Continue</button>
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
 
-  const cancelBtn = document.getElementById("pc-cancel-capture");
-  cancelBtn.addEventListener("click", handleCancelCapture, { capture: true });
-}
+  updateCropSelection();
+  attachCropEventListeners();
 
-// Handle cancel capture
-function handleCancelCapture(e) {
-  e.preventDefault();
-  e.stopPropagation();
-  captureMode = false;
-  document.body.style.cursor = "default";
-  document.removeEventListener("click", handlePriceClick, true);
-  document.removeEventListener("mouseover", handlePriceHover, true);
-  document.removeEventListener("mouseout", handlePriceHoverOut, true);
-  removeInstructionOverlay();
-}
-
-// Remove instruction overlay
-function removeInstructionOverlay() {
-  const overlay = document.getElementById("price-commons-instruction");
-  if (overlay) overlay.remove();
-}
-
-// Show form modal
-function showFormModal() {
-  // Load user location from chrome storage
-  chrome.storage.local.get(["userLocation"], (result) => {
-    if (result.userLocation) {
-      formData.location = result.userLocation;
+  // Add Escape key listener
+  const handleEscape = (e) => {
+    if (e.key === "Escape") {
+      closeCropSelection();
+      document.removeEventListener("keydown", handleEscape);
     }
+  };
+  document.addEventListener("keydown", handleEscape);
+}
 
-    const modal = document.createElement("div");
-    modal.id = "price-commons-modal";
-    modal.innerHTML = generateModalHTML();
-    document.body.appendChild(modal);
+function updateCropSelection() {
+  const selection = document.getElementById("pc-crop-selection");
+  if (selection) {
+    selection.style.left = cropRect.x + "px";
+    selection.style.top = cropRect.y + "px";
+    selection.style.width = cropRect.width + "px";
+    selection.style.height = cropRect.height + "px";
+  }
+}
 
-    attachModalEventListeners();
+function attachCropEventListeners() {
+  const overlay = document.getElementById("pc-crop-overlay");
+  const selection = document.getElementById("pc-crop-selection");
+  const cancelBtn = document.getElementById("pc-crop-cancel");
+  const continueBtn = document.getElementById("pc-crop-continue");
+
+  // Selection drag
+  selection.addEventListener("mousedown", (e) => {
+    if (e.target.classList.contains("pc-crop-handle")) {
+      isResizing = true;
+      resizeHandle = e.target.dataset.handle;
+    } else {
+      isDragging = true;
+    }
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    initialCropRect = { ...cropRect };
+    e.preventDefault();
+  });
+
+  // Mouse move
+  document.addEventListener("mousemove", handleCropMouseMove);
+  document.addEventListener("mouseup", handleCropMouseUp);
+
+  // Buttons
+  cancelBtn.addEventListener("click", () => {
+    closeCropSelection();
+    screenshotDataUrl = null;
+  });
+
+  continueBtn.addEventListener("click", () => {
+    cropScreenshot();
   });
 }
 
-// Generate modal HTML
-function generateModalHTML() {
-  const location = formData.location
-    ? formData.location.fullAddress ||
-      `${formData.location.city}, ${formData.location.country}`
-    : "Not set";
+function handleCropMouseMove(e) {
+  if (!isDragging && !isResizing) return;
 
-  const hasScreenshot = !!screenshotDataUrl;
+  const deltaX = e.clientX - dragStartX;
+  const deltaY = e.clientY - dragStartY;
+
+  if (isDragging) {
+    cropRect.x = Math.max(
+      0,
+      Math.min(window.innerWidth - cropRect.width, initialCropRect.x + deltaX),
+    );
+    cropRect.y = Math.max(
+      0,
+      Math.min(
+        window.innerHeight - cropRect.height,
+        initialCropRect.y + deltaY,
+      ),
+    );
+  } else if (isResizing) {
+    const minSize = 100;
+
+    switch (resizeHandle) {
+      case "nw":
+        cropRect.x = Math.min(
+          initialCropRect.x + initialCropRect.width - minSize,
+          initialCropRect.x + deltaX,
+        );
+        cropRect.y = Math.min(
+          initialCropRect.y + initialCropRect.height - minSize,
+          initialCropRect.y + deltaY,
+        );
+        cropRect.width =
+          initialCropRect.width - (cropRect.x - initialCropRect.x);
+        cropRect.height =
+          initialCropRect.height - (cropRect.y - initialCropRect.y);
+        break;
+      case "ne":
+        cropRect.y = Math.min(
+          initialCropRect.y + initialCropRect.height - minSize,
+          initialCropRect.y + deltaY,
+        );
+        cropRect.width = Math.max(minSize, initialCropRect.width + deltaX);
+        cropRect.height =
+          initialCropRect.height - (cropRect.y - initialCropRect.y);
+        break;
+      case "sw":
+        cropRect.x = Math.min(
+          initialCropRect.x + initialCropRect.width - minSize,
+          initialCropRect.x + deltaX,
+        );
+        cropRect.width =
+          initialCropRect.width - (cropRect.x - initialCropRect.x);
+        cropRect.height = Math.max(minSize, initialCropRect.height + deltaY);
+        break;
+      case "se":
+        cropRect.width = Math.max(minSize, initialCropRect.width + deltaX);
+        cropRect.height = Math.max(minSize, initialCropRect.height + deltaY);
+        break;
+      case "n":
+        cropRect.y = Math.min(
+          initialCropRect.y + initialCropRect.height - minSize,
+          initialCropRect.y + deltaY,
+        );
+        cropRect.height =
+          initialCropRect.height - (cropRect.y - initialCropRect.y);
+        break;
+      case "s":
+        cropRect.height = Math.max(minSize, initialCropRect.height + deltaY);
+        break;
+      case "w":
+        cropRect.x = Math.min(
+          initialCropRect.x + initialCropRect.width - minSize,
+          initialCropRect.x + deltaX,
+        );
+        cropRect.width =
+          initialCropRect.width - (cropRect.x - initialCropRect.x);
+        break;
+      case "e":
+        cropRect.width = Math.max(minSize, initialCropRect.width + deltaX);
+        break;
+    }
+  }
+
+  updateCropSelection();
+}
+
+function handleCropMouseUp() {
+  isDragging = false;
+  isResizing = false;
+  resizeHandle = null;
+}
+
+function closeCropSelection() {
+  document.removeEventListener("mousemove", handleCropMouseMove);
+  document.removeEventListener("mouseup", handleCropMouseUp);
+  const overlay = document.getElementById("pc-crop-overlay");
+  if (overlay) overlay.remove();
+}
+
+function cropScreenshot() {
+  // Create canvas to crop the screenshot
+  const img = new Image();
+  img.onload = () => {
+    // Calculate scale factor (screenshot is at device pixel ratio)
+    const scale = img.width / window.innerWidth;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = cropRect.width * scale;
+    canvas.height = cropRect.height * scale;
+    const ctx = canvas.getContext("2d");
+
+    ctx.drawImage(
+      img,
+      cropRect.x * scale,
+      cropRect.y * scale,
+      cropRect.width * scale,
+      cropRect.height * scale,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
+
+    croppedDataUrl = canvas.toDataURL("image/png");
+    closeCropSelection();
+    showBlurEditor();
+  };
+  img.src = screenshotDataUrl;
+}
+
+// ==========================================
+// BLUR EDITOR (Pre-LLM)
+// ==========================================
+
+function showBlurEditor() {
+  blurRectangles = [];
+
+  const editor = document.createElement("div");
+  editor.id = "pc-blur-editor";
+  editor.innerHTML = `
+    <div class="pc-blur-editor-overlay">
+      <div class="pc-blur-editor-content">
+        <div class="pc-blur-editor-header">
+          <h2>Hide Any Personal Information</h2>
+          <button class="pc-close-btn" id="pc-blur-close">×</button>
+        </div>
+        <div class="pc-blur-editor-body">
+          <div class="pc-blur-canvas-container">
+            <canvas id="pc-blur-canvas"></canvas>
+          </div>
+          <div class="pc-blur-tools">
+            <button class="pc-tool-btn pc-tool-active" id="pc-blur-tool">Blur Tool</button>
+            <button class="pc-tool-btn" id="pc-blur-undo">Undo</button>
+            <button class="pc-tool-btn" id="pc-blur-clear">Clear All</button>
+          </div>
+          <p class="pc-blur-hint">Draw rectangles to blur addresses, names, or other sensitive details</p>
+        </div>
+        <div class="pc-blur-editor-footer">
+          <button class="pc-blur-btn-back" id="pc-blur-back">Back to Crop</button>
+          <button class="pc-blur-btn-analyze" id="pc-blur-analyze">Continue</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(editor);
+
+  initializeBlurCanvas();
+  attachBlurEditorListeners();
+
+  // Add Escape key listener
+  const handleEscape = (e) => {
+    if (e.key === "Escape") {
+      closeBlurEditor();
+      document.removeEventListener("keydown", handleEscape);
+    }
+  };
+  document.addEventListener("keydown", handleEscape);
+}
+
+function initializeBlurCanvas() {
+  const canvas = document.getElementById("pc-blur-canvas");
+  if (!canvas || !croppedDataUrl) return;
+
+  // Hide canvas until fully sized to prevent flash
+  canvas.style.opacity = "0";
+
+  const ctx = canvas.getContext("2d", { alpha: false });
+  const img = new Image();
+
+  img.onload = () => {
+    blurCanvasImage = img;
+
+    // Calculate size constraints
+    const maxWidth = 900;
+    const maxHeight = window.innerHeight * 0.65; // 65vh
+    const widthScale = Math.min(1, maxWidth / img.width);
+    const heightScale = Math.min(1, maxHeight / img.height);
+    const scale = Math.min(widthScale, heightScale);
+
+    const dpr = window.devicePixelRatio || 1;
+
+    // Set canvas internal resolution higher for DPI (makes it sharper)
+    canvas.width = img.width * scale * dpr;
+    canvas.height = img.height * scale * dpr;
+
+    // Set CSS display size
+    canvas.style.width = img.width * scale + "px";
+    canvas.style.height = img.height * scale + "px";
+
+    canvas.dataset.scale = scale;
+    canvas.dataset.dpr = dpr;
+    canvas.dataset.originalWidth = img.width;
+    canvas.dataset.originalHeight = img.height;
+
+    // Scale context to match DPI and use high-quality rendering
+    ctx.scale(dpr, dpr);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, img.width * scale, img.height * scale);
+
+    // Show canvas now that it's fully sized and drawn
+    canvas.style.opacity = "1";
+    canvas.style.transition = "opacity 0.15s ease-in";
+
+    attachBlurCanvasListeners(canvas);
+  };
+
+  img.src = croppedDataUrl;
+}
+
+function attachBlurCanvasListeners(canvas) {
+  canvas.addEventListener("mousedown", startBlurDraw);
+  canvas.addEventListener("mousemove", drawBlurPreview);
+  canvas.addEventListener("mouseup", finishBlurDraw);
+  canvas.addEventListener("mouseleave", cancelBlurDraw);
+}
+
+function startBlurDraw(e) {
+  const canvas = e.target;
+  const rect = canvas.getBoundingClientRect();
+  isDrawingBlur = true;
+  blurStartX = e.clientX - rect.left;
+  blurStartY = e.clientY - rect.top;
+}
+
+function drawBlurPreview(e) {
+  if (!isDrawingBlur) return;
+
+  const canvas = e.target;
+  const rect = canvas.getBoundingClientRect();
+  const currentX = e.clientX - rect.left;
+  const currentY = e.clientY - rect.top;
+
+  redrawBlurCanvas(canvas, {
+    x: Math.min(blurStartX, currentX),
+    y: Math.min(blurStartY, currentY),
+    width: Math.abs(currentX - blurStartX),
+    height: Math.abs(currentY - blurStartY),
+    isPreview: true,
+  });
+}
+
+function finishBlurDraw(e) {
+  if (!isDrawingBlur) return;
+
+  const canvas = e.target;
+  const rect = canvas.getBoundingClientRect();
+  const endX = e.clientX - rect.left;
+  const endY = e.clientY - rect.top;
+
+  const width = Math.abs(endX - blurStartX);
+  const height = Math.abs(endY - blurStartY);
+
+  if (width > 5 && height > 5) {
+    blurRectangles.push({
+      x: Math.min(blurStartX, endX),
+      y: Math.min(blurStartY, endY),
+      width: width,
+      height: height,
+    });
+  }
+
+  isDrawingBlur = false;
+  redrawBlurCanvas(canvas);
+}
+
+function cancelBlurDraw() {
+  isDrawingBlur = false;
+  const canvas = document.getElementById("pc-blur-canvas");
+  if (canvas) redrawBlurCanvas(canvas);
+}
+
+function redrawBlurCanvas(canvas, previewRect = null) {
+  if (!blurCanvasImage) return;
+
+  const ctx = canvas.getContext("2d");
+  const dpr = parseFloat(canvas.dataset.dpr) || 1;
+  const scale = parseFloat(canvas.dataset.scale) || 1;
+  const originalWidth = parseFloat(canvas.dataset.originalWidth);
+  const originalHeight = parseFloat(canvas.dataset.originalHeight);
+
+  // Reset transform and clear
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Apply DPI scaling and redraw base image
+  ctx.scale(dpr, dpr);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(
+    blurCanvasImage,
+    0,
+    0,
+    originalWidth * scale,
+    originalHeight * scale,
+  );
+
+  const allRects = previewRect
+    ? [...blurRectangles, previewRect]
+    : blurRectangles;
+
+  allRects.forEach((rect) => {
+    // Reset transform for pixel operations (getImageData/putImageData work in device pixels)
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    // Convert display coordinates to canvas coordinates (accounting for DPI)
+    const x = Math.max(0, Math.floor(rect.x * dpr));
+    const y = Math.max(0, Math.floor(rect.y * dpr));
+    const w = Math.min(Math.floor(rect.width * dpr), canvas.width - x);
+    const h = Math.min(Math.floor(rect.height * dpr), canvas.height - y);
+
+    if (w <= 0 || h <= 0) return;
+
+    // Pixelation blur
+    const pixelSize = Math.max(1, Math.floor(10 * dpr));
+    const imgData = ctx.getImageData(x, y, w, h);
+
+    for (let py = 0; py < h; py += pixelSize) {
+      for (let px = 0; px < w; px += pixelSize) {
+        const pixelIndex = (py * w + px) * 4;
+        const r = imgData.data[pixelIndex] || 0;
+        const g = imgData.data[pixelIndex + 1] || 0;
+        const b = imgData.data[pixelIndex + 2] || 0;
+
+        for (let by = 0; by < pixelSize && py + by < h; by++) {
+          for (let bx = 0; bx < pixelSize && px + bx < w; bx++) {
+            const idx = ((py + by) * w + (px + bx)) * 4;
+            imgData.data[idx] = r;
+            imgData.data[idx + 1] = g;
+            imgData.data[idx + 2] = b;
+          }
+        }
+      }
+    }
+
+    ctx.putImageData(imgData, x, y);
+
+    // Restore transform for stroke rect
+    if (rect.isPreview) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.strokeStyle = "#2563eb";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+      ctx.setLineDash([]);
+    }
+  });
+}
+
+function attachBlurEditorListeners() {
+  document
+    .getElementById("pc-blur-close")
+    .addEventListener("click", closeBlurEditor);
+  document.getElementById("pc-blur-undo").addEventListener("click", () => {
+    blurRectangles.pop();
+    const canvas = document.getElementById("pc-blur-canvas");
+    if (canvas) redrawBlurCanvas(canvas);
+  });
+  document.getElementById("pc-blur-clear").addEventListener("click", () => {
+    blurRectangles = [];
+    const canvas = document.getElementById("pc-blur-canvas");
+    if (canvas) redrawBlurCanvas(canvas);
+  });
+  document.getElementById("pc-blur-back").addEventListener("click", () => {
+    closeBlurEditor();
+    showCropSelection();
+  });
+  document
+    .getElementById("pc-blur-analyze")
+    .addEventListener("click", analyzeScreenshot);
+}
+
+function closeBlurEditor() {
+  const editor = document.getElementById("pc-blur-editor");
+  if (editor) editor.remove();
+}
+
+function getProcessedBlurDataUrl() {
+  const canvas = document.getElementById("pc-blur-canvas");
+  if (!canvas) return croppedDataUrl;
+
+  // Re-render at full resolution for upload
+  const fullCanvas = document.createElement("canvas");
+  const scale = parseFloat(canvas.dataset.scale) || 1;
+  fullCanvas.width = parseFloat(canvas.dataset.originalWidth) || canvas.width;
+  fullCanvas.height =
+    parseFloat(canvas.dataset.originalHeight) || canvas.height;
+
+  const ctx = fullCanvas.getContext("2d");
+  ctx.drawImage(blurCanvasImage, 0, 0, fullCanvas.width, fullCanvas.height);
+
+  // Apply blurs at full resolution
+  const scaleUp = 1 / scale;
+  blurRectangles.forEach((rect) => {
+    const x = Math.floor(rect.x * scaleUp);
+    const y = Math.floor(rect.y * scaleUp);
+    const w = Math.floor(rect.width * scaleUp);
+    const h = Math.floor(rect.height * scaleUp);
+
+    if (w <= 0 || h <= 0) return;
+
+    const pixelSize = 15;
+    const imgData = ctx.getImageData(x, y, w, h);
+
+    for (let py = 0; py < h; py += pixelSize) {
+      for (let px = 0; px < w; px += pixelSize) {
+        const pixelIndex = (py * w + px) * 4;
+        const r = imgData.data[pixelIndex] || 0;
+        const g = imgData.data[pixelIndex + 1] || 0;
+        const b = imgData.data[pixelIndex + 2] || 0;
+
+        for (let by = 0; by < pixelSize && py + by < h; by++) {
+          for (let bx = 0; bx < pixelSize && px + bx < w; bx++) {
+            const idx = ((py + by) * w + (px + bx)) * 4;
+            imgData.data[idx] = r;
+            imgData.data[idx + 1] = g;
+            imgData.data[idx + 2] = b;
+          }
+        }
+      }
+    }
+
+    ctx.putImageData(imgData, x, y);
+  });
+
+  return fullCanvas.toDataURL("image/png");
+}
+
+// ==========================================
+// LLM ANALYSIS
+// ==========================================
+
+async function analyzeScreenshot() {
+  const analyzeBtn = document.getElementById("pc-blur-analyze");
+  analyzeBtn.disabled = true;
+  analyzeBtn.textContent = "Analyzing...";
+
+  // Get auth token
+  const authResult = await chrome.storage.local.get(["authToken"]);
+  const authToken = authResult.authToken;
+
+  if (!authToken) {
+    analyzeBtn.disabled = false;
+    analyzeBtn.textContent = "Analyze";
+    showWarningModal(
+      "Login Required",
+      "You must be logged in to analyze screenshots. Please log in through the extension popup.",
+      "OK",
+    );
+    return;
+  }
+
+  // Get processed image BEFORE closing editor (canvas needs to exist)
+  const processedImage = getProcessedBlurDataUrl();
+
+  // Check location BEFORE making expensive API call
+  if (locationPromise) {
+    await locationPromise;
+  }
+  if (!userLocation) {
+    analyzeBtn.disabled = false;
+    analyzeBtn.textContent = "Analyze";
+    showLocationRequiredModal();
+    return;
+  }
+
+  closeBlurEditor();
+  showAnalyzingOverlay("Analyzing screenshot...");
+
+  try {
+    const result = await chrome.runtime.sendMessage({
+      action: "fetchAPI",
+      url: "http://localhost:3000/api/analyze-screenshot",
+      options: {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          imageDataUrl: processedImage,
+          pageUrl: window.location.href,
+          pageTitle: document.title,
+        }),
+      },
+    });
+
+    hideAnalyzingOverlay();
+
+    // Handle rate limiting
+    if (result.status === 429) {
+      const retryAfter = result.data?.error || "Rate limit exceeded. Please try again later.";
+      showWarningModal(
+        "Rate Limit Reached",
+        retryAfter,
+        "OK",
+      );
+      return;
+    }
+
+    if (result.success && result.data.success) {
+      const extracted = result.data.data;
+
+      // Check for inappropriate content first
+      if (extracted.isInappropriate) {
+        showWarningModal(
+          "⚠️ Inappropriate Content Detected",
+          extracted.inappropriateReason ||
+            "This screenshot appears to contain inappropriate content. Please capture a product page with pricing information.",
+          "Try Again",
+        );
+        return;
+      }
+
+      // Check if price was detected
+      if (!extracted.hasPrice) {
+        showWarningModal(
+          "❌ No Price Detected",
+          "We couldn't find a price in your screenshot. Please recapture the image with:\n\n• A clearly visible price\n• The product name\n• Preferably on a product page with price breakdown",
+          "Recapture Screenshot",
+        );
+        return;
+      }
+
+      // If no breakdown (shippingCost and fees both null), assume non-final price
+      const hasBreakdown =
+        extracted.shippingCost !== null || extracted.fees !== null;
+      const isFinal = hasBreakdown ? extracted.isFinalPrice || false : false;
+
+      formData = {
+        price: extracted.totalPrice || extracted.basePrice || "",
+        basePrice: extracted.itemPrice != null ? extracted.itemPrice : null,
+        shippingCost:
+          extracted.shippingCost != null ? extracted.shippingCost : null,
+        fees: extracted.fees != null ? extracted.fees : null,
+        currency: extracted.currency || "USD",
+        productName: extracted.productName || "",
+        isFinalPrice: isFinal,
+        storeName: extractStoreName(),
+        location: userLocation,
+        productUrl: window.location.href,
+        screenshotDataUrl: processedImage,
+      };
+      showFormModal();
+    } else {
+      // LLM failed - allow manual entry
+      formData = {
+        price: "",
+        basePrice: null,
+        shippingCost: null,
+        fees: null,
+        currency: "USD",
+        productName: "",
+        isFinalPrice: false,
+        storeName: extractStoreName(),
+        location: userLocation,
+        productUrl: window.location.href,
+        screenshotDataUrl: getProcessedBlurDataUrl(),
+      };
+      showFormModal();
+      alert(
+        "Could not automatically extract price details. Please fill in the form manually.",
+      );
+    }
+  } catch (error) {
+    hideAnalyzingOverlay();
+
+    formData = {
+      price: "",
+      currency: "USD",
+      productName: "",
+      isFinalPrice: false,
+      storeName: extractStoreName(),
+      location: userLocation,
+      productUrl: window.location.href,
+      screenshotDataUrl: getProcessedBlurDataUrl(),
+    };
+    showFormModal();
+    alert("Analysis failed. Please fill in the form manually.");
+  }
+}
+
+function extractStoreName() {
+  return window.location.hostname.replace("www.", "");
+}
+
+// ==========================================
+// WARNING MODAL
+// ==========================================
+
+function showSuccessModal(title, message) {
+  // Remove any existing success modal
+  const existing = document.getElementById("pc-success-modal");
+  if (existing) {
+    existing.remove();
+  }
+
+  const modal = document.createElement("div");
+  modal.id = "pc-success-modal";
+  modal.innerHTML = `
+    <div class="pc-modal-overlay">
+      <div class="pc-success-modal-content">
+        <div class="pc-success-checkmark">
+          <svg viewBox="0 0 24 24">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </div>
+        <h2 class="pc-success-title">${title}</h2>
+        <p class="pc-success-message">${message}</p>
+        <button class="pc-success-btn" id="pc-success-ok">OK</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  // Handle OK button
+  const handleOk = () => {
+    modal.remove();
+    document.removeEventListener("keydown", handleEscape);
+  };
+
+  document.getElementById("pc-success-ok").addEventListener("click", handleOk);
+
+  // Handle Escape key
+  const handleEscape = (e) => {
+    if (e.key === "Escape") {
+      handleOk();
+    }
+  };
+  document.addEventListener("keydown", handleEscape);
+
+  // Handle overlay click
+  modal.querySelector(".pc-modal-overlay").addEventListener("click", (e) => {
+    if (e.target.classList.contains("pc-modal-overlay")) {
+      handleOk();
+    }
+  });
+}
+
+function showLocationRequiredModal() {
+  // Remove any existing location modal
+  const existing = document.getElementById("pc-location-modal");
+  if (existing) {
+    existing.remove();
+  }
+
+  const modal = document.createElement("div");
+  modal.id = "pc-location-modal";
+  modal.innerHTML = `
+    <div class="pc-modal-overlay">
+      <div class="pc-warning-modal-content">
+        <div class="pc-location-icon">
+          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+            <circle cx="12" cy="10" r="3"></circle>
+          </svg>
+        </div>
+        <h2 class="pc-warning-title">Enable location to capture price</h2>
+        <p class="pc-warning-message">
+          We need your location to show your prices to shoppers near you and prevent fraudulent submissions. 
+          Your location is only used when you capture prices—we never track your browsing.
+        </p>
+        <div class="pc-location-instructions">
+          <p><strong>Quick setup:</strong></p>
+          <p>1. Click the location icon (📍) in your browser's address bar</p>
+          <p>2. Set "Location" to "Allow"</p>
+          <p>3. Reload and capture away! 🎯</p>
+        </div>
+        <div class="pc-warning-buttons">
+          <button class="pc-warning-btn-primary" id="pc-location-ok">Got It</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  // Handle OK button
+  const handleOk = () => {
+    modal.remove();
+    document.removeEventListener("keydown", handleEscape);
+  };
+
+  document.getElementById("pc-location-ok").addEventListener("click", handleOk);
+
+  // Handle Escape key
+  const handleEscape = (e) => {
+    if (e.key === "Escape") {
+      handleOk();
+    }
+  };
+  document.addEventListener("keydown", handleEscape);
+
+  // Handle overlay click
+  modal.querySelector(".pc-modal-overlay").addEventListener("click", (e) => {
+    if (e.target.classList.contains("pc-modal-overlay")) {
+      handleOk();
+    }
+  });
+}
+
+function showWarningModal(title, message, buttonText = "Try Again") {
+  // Remove any existing warning modal
+  const existing = document.getElementById("pc-warning-modal");
+  if (existing) {
+    existing.remove();
+  }
+
+  const modal = document.createElement("div");
+  modal.id = "pc-warning-modal";
+  modal.innerHTML = `
+    <div class="pc-modal-overlay">
+      <div class="pc-warning-modal-content">
+        <h2 class="pc-warning-title">${title}</h2>
+        <p class="pc-warning-message">${message.replace(/\n/g, "<br>")}</p>
+        <div class="pc-warning-buttons">
+          <button class="pc-warning-btn-primary" id="pc-warning-retry">${buttonText}</button>
+          <button class="pc-warning-btn-secondary" id="pc-warning-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  // Handle retry button - restart the capture flow
+  document.getElementById("pc-warning-retry").addEventListener("click", () => {
+    modal.remove();
+    // Restart from screenshot
+    startLLMCapture();
+  });
+
+  // Handle cancel button
+  document.getElementById("pc-warning-cancel").addEventListener("click", () => {
+    modal.remove();
+  });
+
+  // Handle overlay click
+  modal.querySelector(".pc-modal-overlay").addEventListener("click", (e) => {
+    if (e.target.classList.contains("pc-modal-overlay")) {
+      modal.remove();
+    }
+  });
+
+  // Handle Escape key
+  const handleEscape = (e) => {
+    if (e.key === "Escape") {
+      modal.remove();
+      document.removeEventListener("keydown", handleEscape);
+    }
+  };
+  document.addEventListener("keydown", handleEscape);
+}
+
+function showErrorModal(title, message, details = "") {
+  // Remove any existing error modal
+  const existing = document.getElementById("pc-error-modal");
+  if (existing) {
+    existing.remove();
+  }
+
+  const modal = document.createElement("div");
+  modal.id = "pc-error-modal";
+
+  const detailsHtml = details
+    ? `<div class="pc-error-details">
+         <p class="pc-error-details-label">Details:</p>
+         <p class="pc-error-details-text">${details.replace(/\n/g, "<br>")}</p>
+       </div>`
+    : "";
+
+  modal.innerHTML = `
+    <div class="pc-modal-overlay">
+      <div class="pc-warning-modal-content">
+        <h2 class="pc-warning-title" style="color: #dc2626;">⚠️ ${title}</h2>
+        <p class="pc-warning-message">${message.replace(/\n/g, "<br>")}</p>
+        ${detailsHtml}
+        <div class="pc-warning-buttons">
+          <button class="pc-warning-btn-primary" id="pc-error-ok">OK</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  // Handle OK button
+  document.getElementById("pc-error-ok").addEventListener("click", () => {
+    modal.remove();
+  });
+
+  // Handle overlay click
+  modal.querySelector(".pc-modal-overlay").addEventListener("click", (e) => {
+    if (e.target.classList.contains("pc-modal-overlay")) {
+      modal.remove();
+    }
+  });
+
+  // Handle Escape key
+  const handleEscape = (e) => {
+    if (e.key === "Escape") {
+      modal.remove();
+      document.removeEventListener("keydown", handleEscape);
+    }
+  };
+  document.addEventListener("keydown", handleEscape);
+}
+
+// ==========================================
+// ANALYZING OVERLAY
+// ==========================================
+
+function showAnalyzingOverlay(text = "Analyzing...") {
+  // Remove existing overlay if any
+  hideAnalyzingOverlay();
+
+  const overlay = document.createElement("div");
+  overlay.id = "pc-analyzing-overlay";
+  overlay.innerHTML = `
+    <div class="pc-analyzing-content">
+      <div class="pc-analyzing-spinner"></div>
+      <p class="pc-analyzing-text">${text}</p>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function hideAnalyzingOverlay() {
+  const overlay = document.getElementById("pc-analyzing-overlay");
+  if (overlay) overlay.remove();
+}
+
+// ==========================================
+// FORM MODAL
+// ==========================================
+
+function showFormModal() {
+  const modal = document.createElement("div");
+  modal.id = "price-commons-modal";
+  modal.innerHTML = generateModalHTML();
+  document.body.appendChild(modal);
+
+  attachModalEventListeners();
+
+  // Auto-search for product if LLM provided a name
+  if (formData.productName && formData.productName.length >= 2) {
+    searchProducts(formData.productName);
+  }
+}
+
+function generateModalHTML() {
+  const location = userLocation
+    ? userLocation.fullAddress ||
+      `${userLocation.city}, ${userLocation.country}`
+    : "Location not available";
+
+  const currency = formData.currency || "USD";
+  const basePrice = formData.basePrice != null ? formData.basePrice : null;
+  const shipping = formData.shippingCost != null ? formData.shippingCost : null;
+  const fees = formData.fees != null ? formData.fees : null;
+  const totalPrice = formData.price || null;
 
   return `
     <div class="pc-modal-overlay">
-      <div class="pc-modal-content ${hasScreenshot ? 'pc-modal-wide' : ''}">
+      <div class="pc-modal-content">
         <div class="pc-modal-header">
           <img src="${chrome.runtime.getURL(
-            "icon.png"
+            "icon.png",
           )}" alt="PriceGit" class="pc-header-icon">
-          <div class="pc-header-text">
-            <h1>PriceGit</h1>
-            <p>Shared Price Knowledge</p>
-          </div>
+          <span class="pc-header-title">Submit Price</span>
           <button id="pc-close-modal" class="pc-close-btn">×</button>
         </div>
 
-        <div class="pc-modal-body ${hasScreenshot ? 'pc-modal-body-split' : ''}">
-          ${hasScreenshot ? `
-          <!-- Screenshot Panel (Left) -->
-          <div class="pc-screenshot-panel">
-            <div class="pc-screenshot-header">
-              <span>Screenshot</span>
-              <div class="pc-screenshot-tools">
-                <button id="pc-blur-tool" class="pc-tool-btn pc-tool-active" title="Draw blur rectangle">
-                  Blur Tool
-                </button>
-                <button id="pc-undo-blur" class="pc-tool-btn" title="Undo last blur">
-                  Undo
-                </button>
-                <button id="pc-clear-blurs" class="pc-tool-btn" title="Clear all blurs">
-                  Clear
-                </button>
+        <div class="pc-modal-body">
+          <div class="pc-price-breakdown-section">
+            <h3 class="pc-breakdown-title">Captured Price</h3>
+            <div class="pc-breakdown-grid">
+              <div class="pc-breakdown-row">
+                <span class="pc-breakdown-label">Base price:</span>
+                <span class="pc-breakdown-value">${basePrice != null ? `${currency} ${basePrice.toFixed(2)}` : "—"}</span>
+              </div>
+              <div class="pc-breakdown-row">
+                <span class="pc-breakdown-label">Shipping:</span>
+                <span class="pc-breakdown-value">${shipping != null ? `${currency} ${shipping.toFixed(2)}` : "—"}</span>
+              </div>
+              <div class="pc-breakdown-row">
+                <span class="pc-breakdown-label">Fees & taxes:</span>
+                <span class="pc-breakdown-value">${fees != null ? `${currency} ${fees.toFixed(2)}` : "—"}</span>
+              </div>
+              <div class="pc-breakdown-row pc-breakdown-total">
+                <span class="pc-breakdown-label">Total:</span>
+                <span class="pc-breakdown-value">${totalPrice != null ? `${currency} ${parseFloat(totalPrice).toFixed(2)}` : "—"}</span>
               </div>
             </div>
-            <div class="pc-screenshot-container">
-              <canvas id="pc-screenshot-canvas"></canvas>
-            </div>
-            <p class="pc-screenshot-hint">Draw rectangles to blur sensitive information</p>
           </div>
-          ` : ''}
 
-          <!-- Form Panel (Right or Full) -->
-          <div class="pc-form-panel">
-            <div class="pc-form-group">
-              <label>Price</label>
-              <div class="pc-price-currency-row">
-                <div class="pc-price-display">
-                  <input type="text" id="pc-price" value="${
-                    formData.price || ""
-                  }" readonly disabled>
-                  <button id="pc-recapture" class="pc-recapture-btn" title="Recapture price">🖱️</button>
-                </div>
-                <select id="pc-currency" class="pc-currency-select">
-                  ${generateCurrencyOptions()}
-                </select>
-              </div>
-            </div>
-
-            <div class="pc-form-group">
+          <div class="pc-form-grid">
+            <div class="pc-form-group pc-form-col-full">
               <label>Product</label>
               <div class="pc-search-container">
-                <input type="text" id="pc-product-name" placeholder="Search for product..." value="${
+                <input type="text" id="pc-product-name" placeholder="Search or create product..." value="${
                   formData.productName || ""
                 }" autocomplete="off">
                 <div id="pc-product-dropdown" class="pc-dropdown"></div>
               </div>
             </div>
 
-            <div class="pc-form-group">
-              <label class="pc-toggle-label">
-                <input type="checkbox" id="pc-is-final-price" ${formData.isFinalPrice ? 'checked' : ''}>
-                <span>This is the final price (includes tax, shipping, fees)</span>
+            <div class="pc-form-group pc-form-col-full">
+              <label>Captured from</label>
+              <div class="pc-info-text">${location}</div>
+            </div>
+
+            <div class="pc-form-group pc-form-col-full pc-checkbox-group">
+              <label class="pc-checkbox-label">
+                <input type="checkbox" id="pc-different-shipping">
+                <span class="pc-checkbox-custom"></span>
+                <span class="pc-checkbox-text">Shipping address set to a different location</span>
               </label>
             </div>
 
-            <div class="pc-form-group">
-              <label>Store name</label>
-              <input type="text" id="pc-store-name" value="${
-                formData.storeName || ""
-              }" readonly disabled>
-            </div>
-
-            <div class="pc-form-group">
-              <label>Shipping Address</label>
-              <div class="pc-location-display">
-                <span id="pc-location-text">${location}</span>
-                <button id="pc-edit-location" class="pc-edit-btn">Edit</button>
+            <div class="pc-form-group pc-form-col-full pc-shipping-location-group" id="pc-shipping-location-group" style="display: none;">
+              <label>Delivery Location</label>
+              <div class="pc-search-container">
+                <input type="text" id="pc-delivery-location" placeholder="Search for city..." autocomplete="off">
+                <div id="pc-delivery-dropdown" class="pc-dropdown"></div>
               </div>
             </div>
           </div>
         </div>
 
         <div class="pc-modal-footer">
-          <button id="pc-submit" class="pc-submit-btn">Submit</button>
+          <button id="pc-submit" class="pc-submit-btn">Submit Price</button>
         </div>
       </div>
     </div>
   `;
 }
 
-// Truncate URL for display
-function truncateUrl(url) {
-  try {
-    const urlObj = new URL(url);
-    const path = urlObj.pathname;
-    if (path.length > 30) {
-      return urlObj.hostname + "/.../" + path.split("/").pop();
-    }
-    return urlObj.hostname + path;
-  } catch {
-    return url;
-  }
-}
-
-// Generate currency dropdown options
 function generateCurrencyOptions() {
   const currencies = [
     "USD",
@@ -413,17 +1349,64 @@ function generateCurrencyOptions() {
       (code) =>
         `<option value="${code}" ${
           formData.currency === code ? "selected" : ""
-        }>${code}</option>`
+        }>${code}</option>`,
     )
     .join("");
 }
 
-// Attach event listeners to modal
+function initializeModalScreenshotCanvas() {
+  const canvas = document.getElementById("pc-screenshot-canvas");
+  if (!canvas || !formData.screenshotDataUrl) return;
+
+  const ctx = canvas.getContext("2d");
+  const img = new Image();
+
+  img.onload = () => {
+    blurCanvasImage = img;
+
+    const maxWidth = 600;
+    const dpr = window.devicePixelRatio || 1;
+    const scale = Math.min(1, maxWidth / img.width);
+
+    // Set canvas internal resolution higher for DPI
+    canvas.width = img.width * scale * dpr;
+    canvas.height = img.height * scale * dpr;
+
+    // Set CSS display size
+    canvas.style.width = img.width * scale + "px";
+    canvas.style.height = img.height * scale + "px";
+
+    canvas.dataset.scale = scale;
+    canvas.dataset.originalWidth = img.width;
+    canvas.dataset.originalHeight = img.height;
+
+    // Scale context to match DPI
+    ctx.scale(dpr, dpr);
+    ctx.drawImage(img, 0, 0, img.width * scale, img.height * scale);
+  };
+
+  img.src = formData.screenshotDataUrl;
+}
+
 function attachModalEventListeners() {
-  // Close modal
   document
     .getElementById("pc-close-modal")
     .addEventListener("click", closeModal);
+
+  // Handle Escape key to close modal
+  const handleEscape = (e) => {
+    if (e.key === "Escape") {
+      closeModal();
+    }
+  };
+  document.addEventListener("keydown", handleEscape);
+
+  // Clean up the listener when modal is closed
+  const originalCloseModal = window.closeModal;
+  window.closeModal = function () {
+    document.removeEventListener("keydown", handleEscape);
+    if (originalCloseModal) originalCloseModal();
+  };
 
   // Product search
   const productInput = document.getElementById("pc-product-name");
@@ -431,6 +1414,8 @@ function attachModalEventListeners() {
   productInput.addEventListener("input", (e) => {
     clearTimeout(searchTimeout);
     const query = e.target.value.trim();
+    formData.productName = query;
+    validateForm();
 
     if (query.length < 2) {
       document.getElementById("pc-product-dropdown").style.display = "none";
@@ -440,57 +1425,109 @@ function attachModalEventListeners() {
     searchTimeout = setTimeout(() => searchProducts(query), 300);
   });
 
-  // Edit location
-  document
-    .getElementById("pc-edit-location")
-    .addEventListener("click", openLocationModal);
+  // Capture location search (if location missing)
+  const captureLocationInput = document.getElementById("pc-capture-location");
+  if (captureLocationInput) {
+    let captureSearchTimeout;
+    captureLocationInput.addEventListener("input", (e) => {
+      clearTimeout(captureSearchTimeout);
+      const query = e.target.value.trim();
+      captureSearchTimeout = setTimeout(
+        () => searchCaptureLocations(query),
+        300,
+      );
+    });
+  }
 
-  // Currency change
-  document.getElementById("pc-currency").addEventListener("change", (e) => {
-    formData.currency = e.target.value;
-    saveFormData();
+  // Screenshot blur tools (if exists)
+  const undoBtn = document.getElementById("pc-undo-blur-modal");
+  const clearBtn = document.getElementById("pc-clear-blurs-modal");
+
+  if (undoBtn) {
+    undoBtn.addEventListener("click", () => {
+      blurRectangles.pop();
+      const canvas = document.getElementById("pc-screenshot-canvas");
+      if (canvas) redrawBlurCanvas(canvas);
+    });
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      blurRectangles = [];
+      const canvas = document.getElementById("pc-screenshot-canvas");
+      if (canvas) redrawBlurCanvas(canvas);
+    });
+  }
+
+  // Different shipping location toggle
+  const differentShippingCheckbox = document.getElementById(
+    "pc-different-shipping",
+  );
+  const shippingLocationGroup = document.getElementById(
+    "pc-shipping-location-group",
+  );
+
+  differentShippingCheckbox.addEventListener("change", (e) => {
+    if (e.target.checked) {
+      shippingLocationGroup.style.display = "block";
+    } else {
+      shippingLocationGroup.style.display = "none";
+      formData.deliveryLocation = null;
+      document.getElementById("pc-delivery-location").value = "";
+    }
+    validateForm();
   });
 
-  // Recapture price
-  document.getElementById("pc-recapture").addEventListener("click", () => {
-    // Reset screenshot state when recapturing
-    screenshotDataUrl = null;
-    blurRectangles = [];
-    originalScreenshotImage = null;
-    closeModal();
-    startPriceCapture();
+  // Delivery location search
+  const deliveryInput = document.getElementById("pc-delivery-location");
+  let deliverySearchTimeout;
+  deliveryInput.addEventListener("input", (e) => {
+    clearTimeout(deliverySearchTimeout);
+    const query = e.target.value.trim();
+
+    if (query.length < 2) {
+      document.getElementById("pc-delivery-dropdown").style.display = "none";
+      return;
+    }
+
+    deliverySearchTimeout = setTimeout(
+      () => searchDeliveryLocations(query),
+      300,
+    );
   });
 
   // Submit
   document.getElementById("pc-submit").addEventListener("click", submitPrice);
 
-  // is_final_price toggle
-  const finalPriceCheckbox = document.getElementById("pc-is-final-price");
-  if (finalPriceCheckbox) {
-    finalPriceCheckbox.addEventListener("change", (e) => {
-      formData.isFinalPrice = e.target.checked;
-      saveFormData();
-    });
-  }
-
-  // Screenshot tools (if screenshot panel exists)
-  const undoBtn = document.getElementById("pc-undo-blur");
-  const clearBtn = document.getElementById("pc-clear-blurs");
-
-  if (undoBtn) {
-    undoBtn.addEventListener("click", undoLastBlur);
-  }
-  if (clearBtn) {
-    clearBtn.addEventListener("click", clearAllBlurs);
-  }
-
-  // Initialize canvas if screenshot exists
-  if (screenshotDataUrl) {
-    initializeScreenshotCanvas();
-  }
+  // Initial validation
+  validateForm();
 }
 
-// Search products
+function validateForm() {
+  const submitBtn = document.getElementById("pc-submit");
+  if (!submitBtn) return;
+
+  const hasProductName =
+    formData.productName && formData.productName.trim().length > 0;
+
+  const differentShipping = document.getElementById("pc-different-shipping");
+  const needsDeliveryLocation = differentShipping && differentShipping.checked;
+  const hasDeliveryLocation =
+    formData.deliveryLocation && formData.deliveryLocation.city;
+
+  const needsCaptureLocation = !userLocation;
+  const hasCaptureLocation = formData.location && formData.location.city;
+
+  const isValid =
+    hasProductName &&
+    (!needsDeliveryLocation || hasDeliveryLocation) &&
+    (!needsCaptureLocation || hasCaptureLocation);
+
+  submitBtn.disabled = !isValid;
+  submitBtn.style.opacity = isValid ? "1" : "0.5";
+  submitBtn.style.cursor = isValid ? "pointer" : "not-allowed";
+}
+
 async function searchProducts(query) {
   try {
     const result = await chrome.runtime.sendMessage({
@@ -505,21 +1542,17 @@ async function searchProducts(query) {
 
     if (result.success) {
       displayProductDropdown(result.data.products || [], query);
-    } else {
-      console.error("Product search error:", result.error || result.data);
     }
-  } catch (error) {
-    console.error("Product search error:", error);
+  } catch {
+    // Product search failed — dropdown stays hidden
   }
 }
 
-// Display product dropdown
 function displayProductDropdown(products, query) {
   const dropdown = document.getElementById("pc-product-dropdown");
   dropdown.innerHTML = "";
 
   if (products.length === 0) {
-    // Show create new option
     const createOption = document.createElement("div");
     createOption.className = "pc-dropdown-item pc-create-new";
     createOption.innerHTML = `➕ Create new product: "${query}"`;
@@ -528,10 +1561,11 @@ function displayProductDropdown(products, query) {
       formData.productId = null;
       document.getElementById("pc-product-name").value = query;
       dropdown.style.display = "none";
-      saveFormData();
+      validateForm();
     });
     dropdown.appendChild(createOption);
   } else {
+    // Show existing products
     products.forEach((product) => {
       const item = document.createElement("div");
       item.className = "pc-dropdown-item";
@@ -541,7 +1575,73 @@ function displayProductDropdown(products, query) {
         formData.productId = product.id;
         document.getElementById("pc-product-name").value = product.name;
         dropdown.style.display = "none";
-        saveFormData();
+        validateForm();
+      });
+      dropdown.appendChild(item);
+    });
+
+    // Always show create option at the bottom
+    const createOption = document.createElement("div");
+    createOption.className = "pc-dropdown-item pc-create-new";
+    createOption.innerHTML = `➕ Create new product: "${query}"`;
+    createOption.addEventListener("click", () => {
+      formData.productName = query;
+      formData.productId = null;
+      document.getElementById("pc-product-name").value = query;
+      dropdown.style.display = "none";
+      validateForm();
+    });
+    dropdown.appendChild(createOption);
+  }
+
+  dropdown.style.display = "block";
+}
+
+async function searchDeliveryLocations(query) {
+  try {
+    const result = await chrome.runtime.sendMessage({
+      action: "fetchAPI",
+      url: `http://localhost:3000/api/geocode?q=${encodeURIComponent(query)}`,
+      options: {
+        method: "GET",
+      },
+    });
+
+    if (result.success && result.data.features) {
+      displayDeliveryDropdown(result.data.features);
+    }
+  } catch {
+    // Delivery location search failed — dropdown stays hidden
+  }
+}
+
+function displayDeliveryDropdown(locations) {
+  const dropdown = document.getElementById("pc-delivery-dropdown");
+  dropdown.innerHTML = "";
+
+  if (locations.length === 0) {
+    const noResults = document.createElement("div");
+    noResults.className = "pc-dropdown-item pc-dropdown-no-results";
+    noResults.textContent = "No locations found";
+    dropdown.appendChild(noResults);
+  } else {
+    locations.forEach((location) => {
+      const item = document.createElement("div");
+      item.className = "pc-dropdown-item";
+      item.textContent = location.place_name;
+      item.addEventListener("click", () => {
+        const [lng, lat] = location.center;
+        formData.deliveryLocation = {
+          city: location.text,
+          country: extractCountryFromContext(location.context),
+          fullAddress: location.place_name,
+          latitude: lat,
+          longitude: lng,
+        };
+        document.getElementById("pc-delivery-location").value =
+          location.place_name;
+        dropdown.style.display = "none";
+        validateForm();
       });
       dropdown.appendChild(item);
     });
@@ -550,500 +1650,46 @@ function displayProductDropdown(products, query) {
   dropdown.style.display = "block";
 }
 
-// Location modal state
-let tempSelectedLocation = null;
-let locationSearchTimeout = null;
-
-// Open location modal
-function openLocationModal() {
-  const locationModal = document.createElement("div");
-  locationModal.id = "pc-location-modal";
-  locationModal.innerHTML = generateLocationModalHTML();
-  document.body.appendChild(locationModal);
-
-  attachLocationModalListeners();
+function extractCountryFromContext(context) {
+  if (!context) return "Unknown";
+  const country = context.find((c) => c.id.startsWith("country."));
+  return country ? country.text : "Unknown";
 }
 
-// Generate location modal HTML
-function generateLocationModalHTML() {
-  const currentLocation = formData.location
-    ? `${formData.location.city}, ${formData.location.country}`
-    : "";
-
-  return `
-    <div class="pc-modal-overlay" id="pc-location-overlay">
-      <div class="pc-location-modal-content">
-        <div class="pc-location-header">
-          <h3>Edit Location</h3>
-          <button id="pc-close-location-modal" class="pc-close-btn">×</button>
-        </div>
-        <div class="pc-location-body">
-          <label for="pc-location-search" class="pc-location-label">Search for your address or city</label>
-          <input 
-            type="text" 
-            id="pc-location-search" 
-            placeholder="e.g., Tel Aviv, Israel or 123 Main St, New York"
-            autocomplete="off"
-            value="${currentLocation}"
-          >
-          <div id="pc-location-suggestions" class="pc-location-suggestions" style="display: none;"></div>
-          <div id="pc-location-error" class="pc-location-error" style="display: none;"></div>
-          <div id="pc-selected-location-display" class="pc-selected-location-display" style="display: none;">
-            <div class="pc-selected-label">Selected Location:</div>
-            <div id="pc-selected-location-text" class="pc-selected-location-text"></div>
-          </div>
-        </div>
-        <div class="pc-location-footer">
-          <button id="pc-save-location" class="pc-btn-save" disabled>Save Location</button>
-          <button id="pc-cancel-location" class="pc-btn-cancel">Cancel</button>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-// Attach location modal event listeners
-function attachLocationModalListeners() {
-  const closeBtn = document.getElementById("pc-close-location-modal");
-  const cancelBtn = document.getElementById("pc-cancel-location");
-  const saveBtn = document.getElementById("pc-save-location");
-  const locationSearch = document.getElementById("pc-location-search");
-  const overlay = document.getElementById("pc-location-overlay");
-
-  closeBtn.addEventListener("click", closeLocationModal);
-  cancelBtn.addEventListener("click", closeLocationModal);
-  saveBtn.addEventListener("click", saveLocationSelection);
-  locationSearch.addEventListener("input", handleLocationSearchInput);
-
-  // Close on overlay click
-  overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) {
-      closeLocationModal();
-    }
-  });
-}
-
-// Handle location search input
-function handleLocationSearchInput(e) {
-  const query = e.target.value.trim();
-
-  if (locationSearchTimeout) {
-    clearTimeout(locationSearchTimeout);
-  }
-
-  const suggestionsDiv = document.getElementById("pc-location-suggestions");
-  const errorDiv = document.getElementById("pc-location-error");
-
-  if (query.length < 3) {
-    suggestionsDiv.style.display = "none";
-    errorDiv.style.display = "none";
-    return;
-  }
-
-  locationSearchTimeout = setTimeout(() => {
-    searchLocation(query);
-  }, 300);
-}
-
-// Search location via geocode API
-async function searchLocation(query) {
-  const errorDiv = document.getElementById("pc-location-error");
-  errorDiv.style.display = "none";
-
-  try {
-    const result = await chrome.runtime.sendMessage({
-      action: "fetchAPI",
-      url: `http://localhost:3000/api/geocode?q=${encodeURIComponent(query)}`,
-    });
-
-    if (!result.success) {
-      if (result.status === 429) {
-        showLocationError(
-          result.data?.message || "Rate limit exceeded. Please try again later."
-        );
-      } else {
-        showLocationError(
-          "Failed to fetch location suggestions. Please try again."
-        );
-      }
-      return;
-    }
-
-    displayLocationSuggestions(result.data.features || []);
-  } catch (error) {
-    console.error("Error fetching location suggestions:", error);
-    showLocationError(
-      "Failed to fetch location suggestions. Please try again."
-    );
-  }
-}
-
-// Display location suggestions
-function displayLocationSuggestions(suggestions) {
-  const suggestionsDiv = document.getElementById("pc-location-suggestions");
-
-  if (suggestions.length === 0) {
-    suggestionsDiv.style.display = "none";
-    return;
-  }
-
-  suggestionsDiv.innerHTML = "";
-
-  suggestions.forEach((suggestion) => {
-    const item = document.createElement("div");
-    item.className = "pc-location-suggestion-item";
-    item.textContent = suggestion.place_name;
-
-    item.addEventListener("click", () => {
-      selectLocation(suggestion);
-    });
-
-    suggestionsDiv.appendChild(item);
-  });
-
-  suggestionsDiv.style.display = "block";
-}
-
-// Select a location suggestion
-function selectLocation(suggestion) {
-  const [longitude, latitude] = suggestion.center;
-  const parts = suggestion.place_name.split(", ");
-
-  // Handle different address formats:
-  // - "City, Country" (2 parts) -> city = parts[0]
-  // - "Street, City, Country" (3+ parts) -> city = parts[1]
-  let city, country;
-
-  if (parts.length >= 3) {
-    // Street address format: use second part as city
-    city = parts[1];
-    country = parts[parts.length - 1];
-  } else {
-    // City format: use first part as city
-    city = parts[0];
-    country = parts[parts.length - 1];
-  }
-
-  tempSelectedLocation = {
-    country,
-    city,
-    latitude,
-    longitude,
-    fullAddress: suggestion.place_name, // Store the complete address
-  };
-
-  const locationSearch = document.getElementById("pc-location-search");
-  const suggestionsDiv = document.getElementById("pc-location-suggestions");
-  const selectedDisplay = document.getElementById(
-    "pc-selected-location-display"
-  );
-  const selectedText = document.getElementById("pc-selected-location-text");
-  const saveBtn = document.getElementById("pc-save-location");
-
-  locationSearch.value = suggestion.place_name;
-  suggestionsDiv.style.display = "none";
-  selectedText.textContent = suggestion.place_name; // Display full address
-  selectedDisplay.style.display = "block";
-  saveBtn.disabled = false;
-}
-
-// Show location error
-function showLocationError(message) {
-  const errorDiv = document.getElementById("pc-location-error");
-  const suggestionsDiv = document.getElementById("pc-location-suggestions");
-
-  errorDiv.textContent = message;
-  errorDiv.style.display = "block";
-  suggestionsDiv.style.display = "none";
-}
-
-// Save location selection
-async function saveLocationSelection() {
-  if (!tempSelectedLocation) return;
-
-  formData.location = { ...tempSelectedLocation };
-
-  // Save to chrome.storage.local
-  try {
-    await chrome.storage.local.set({ userLocation: formData.location });
-    console.log("Location saved to storage");
-  } catch (error) {
-    console.error("Error saving location:", error);
-  }
-
-  saveFormData();
-
-  // Update location display in main modal
-  const locationText = document.getElementById("pc-location-text");
-  if (locationText) {
-    locationText.textContent =
-      formData.location.fullAddress ||
-      `${formData.location.city}, ${formData.location.country}`;
-  }
-
-  closeLocationModal();
-}
-
-// Close location modal
-function closeLocationModal() {
-  const modal = document.getElementById("pc-location-modal");
-  if (modal) modal.remove();
-
-  tempSelectedLocation = null;
-  locationSearchTimeout = null;
-}
-
-// Submit price
-async function submitPrice() {
-  if (!formData.productName || !formData.price || !formData.location) {
-    alert("Please fill in all required fields");
-    return;
-  }
-
-  const submitBtn = document.getElementById("pc-submit");
-  submitBtn.disabled = true;
-  submitBtn.textContent = "Submitting...";
-
-  try {
-    // Get auth token
-    const authResult = await chrome.storage.local.get(["authToken"]);
-    const authToken = authResult.authToken;
-
-    let uploadedScreenshotUrl = null;
-
-    // Upload screenshot if available
-    if (screenshotDataUrl) {
-      submitBtn.textContent = "Uploading screenshot...";
-
-      const processedScreenshot = getProcessedScreenshotDataUrl();
-
-      if (processedScreenshot) {
-        try {
-          const uploadResult = await chrome.runtime.sendMessage({
-            action: "fetchAPI",
-            url: "http://localhost:3000/api/upload-screenshot",
-            options: {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                ...(authToken ? { "Authorization": `Bearer ${authToken}` } : {}),
-              },
-              body: JSON.stringify({ imageDataUrl: processedScreenshot }),
-            },
-          });
-
-          if (uploadResult.success && uploadResult.data.success) {
-            uploadedScreenshotUrl = uploadResult.data.screenshotUrl;
-            console.log("Screenshot uploaded:", uploadedScreenshotUrl);
-          } else {
-            console.warn("Screenshot upload failed, continuing without screenshot:", uploadResult);
-          }
-        } catch (uploadError) {
-          console.warn("Screenshot upload error, continuing without screenshot:", uploadError);
-        }
-      }
-    }
-
-    submitBtn.textContent = "Saving price...";
-
-    const payload = {
-      productName: formData.productName,
-      productId: formData.productId,
-      storeName: formData.storeName,
-      price: parseFloat(formData.price),
-      currency: formData.currency,
-      url: formData.productUrl,
-      location: formData.location,
-      isFinalPrice: formData.isFinalPrice || false,
-      screenshotUrl: uploadedScreenshotUrl,
-    };
-
-    const result = await chrome.runtime.sendMessage({
-      action: "fetchAPI",
-      url: "http://localhost:3000/api/save-price",
-      options: {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(authToken ? { "Authorization": `Bearer ${authToken}` } : {}),
-        },
-        body: JSON.stringify(payload),
-      },
-    });
-
-    if (result.success && result.data.success) {
-      // Clear form data and screenshot state
-      chrome.storage.local.remove(["priceCommonsCaptureForm"]);
-      screenshotDataUrl = null;
-      blurRectangles = [];
-      originalScreenshotImage = null;
-
-      // Show success message
-      alert("Price submitted successfully!");
-      closeModal();
-    } else {
-      alert(
-        "Failed to submit price: " +
-          (result.data?.error || result.error || "Unknown error")
-      );
-      submitBtn.disabled = false;
-      submitBtn.textContent = "Submit";
-    }
-  } catch (error) {
-    console.error("Submit error:", error);
-    alert("Failed to submit price. Please try again.");
-    submitBtn.disabled = false;
-    submitBtn.textContent = "Submit";
-  }
-}
-
-// Close modal
-function closeModal() {
-  const modal = document.getElementById("price-commons-modal");
-  if (modal) modal.remove();
-}
-
-// ==========================================
-// SCREENSHOT CANVAS AND BLUR TOOL FUNCTIONS
-// ==========================================
-
-// Initialize screenshot canvas
-function initializeScreenshotCanvas() {
-  const canvas = document.getElementById('pc-screenshot-canvas');
-  if (!canvas || !screenshotDataUrl) return;
-
-  const ctx = canvas.getContext('2d');
-  const img = new Image();
-
-  img.onload = function() {
-    // Store original image for redrawing
-    originalScreenshotImage = img;
-
-    // Calculate display size (fit within container, max ~400px width)
-    const maxWidth = 400;
-    const scale = Math.min(1, maxWidth / img.width);
-    canvas.width = img.width * scale;
-    canvas.height = img.height * scale;
-
-    // Store scale for coordinate conversion
-    canvas.dataset.scale = scale;
-    canvas.dataset.originalWidth = img.width;
-    canvas.dataset.originalHeight = img.height;
-
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-    // Attach event listeners for blur drawing
-    attachBlurEventListeners(canvas);
-  };
-
-  img.src = screenshotDataUrl;
-}
-
-// Attach blur event listeners to canvas
-function attachBlurEventListeners(canvas) {
-  canvas.addEventListener('mousedown', startBlurDraw);
-  canvas.addEventListener('mousemove', drawBlurPreview);
-  canvas.addEventListener('mouseup', finishBlurDraw);
-  canvas.addEventListener('mouseleave', cancelBlurDraw);
-}
-
-// Start drawing blur rectangle
-function startBlurDraw(e) {
-  const canvas = e.target;
-  const rect = canvas.getBoundingClientRect();
-  isDrawingBlur = true;
-  blurStartX = e.clientX - rect.left;
-  blurStartY = e.clientY - rect.top;
-}
-
-// Draw blur preview while dragging
-function drawBlurPreview(e) {
-  if (!isDrawingBlur) return;
-
-  const canvas = e.target;
-  const rect = canvas.getBoundingClientRect();
-  const currentX = e.clientX - rect.left;
-  const currentY = e.clientY - rect.top;
-
-  // Redraw canvas with existing blurs + preview
-  redrawCanvasWithBlurs(canvas, {
-    x: Math.min(blurStartX, currentX),
-    y: Math.min(blurStartY, currentY),
-    width: Math.abs(currentX - blurStartX),
-    height: Math.abs(currentY - blurStartY),
-    isPreview: true
-  });
-}
-
-// Finish drawing blur rectangle
-function finishBlurDraw(e) {
-  if (!isDrawingBlur) return;
-
-  const canvas = e.target;
-  const rect = canvas.getBoundingClientRect();
-  const endX = e.clientX - rect.left;
-  const endY = e.clientY - rect.top;
-
-  // Only add if rectangle is meaningful (> 5px in both dimensions)
-  const width = Math.abs(endX - blurStartX);
-  const height = Math.abs(endY - blurStartY);
-
-  if (width > 5 && height > 5) {
-    blurRectangles.push({
-      x: Math.min(blurStartX, endX),
-      y: Math.min(blurStartY, endY),
-      width: width,
-      height: height
-    });
-  }
-
-  isDrawingBlur = false;
-  redrawCanvasWithBlurs(canvas);
-}
-
-// Cancel blur drawing (mouse left canvas)
-function cancelBlurDraw() {
-  isDrawingBlur = false;
-  const canvas = document.getElementById('pc-screenshot-canvas');
-  if (canvas) redrawCanvasWithBlurs(canvas);
-}
-
-// Redraw canvas with all blur rectangles
-function redrawCanvasWithBlurs(canvas, previewRect = null) {
-  if (!originalScreenshotImage) return;
-
-  const ctx = canvas.getContext('2d');
-
-  // Redraw original image
-  ctx.drawImage(originalScreenshotImage, 0, 0, canvas.width, canvas.height);
-
-  // Apply blur to each rectangle
-  const allRects = previewRect ? [...blurRectangles, previewRect] : blurRectangles;
-
-  allRects.forEach(rect => {
-    // Ensure rect is within canvas bounds
-    const x = Math.max(0, Math.floor(rect.x));
-    const y = Math.max(0, Math.floor(rect.y));
-    const w = Math.min(Math.floor(rect.width), canvas.width - x);
-    const h = Math.min(Math.floor(rect.height), canvas.height - y);
+function getModalProcessedScreenshot() {
+  const canvas = document.getElementById("pc-screenshot-canvas");
+  if (!canvas || !blurCanvasImage) return formData.screenshotDataUrl;
+
+  // Re-render at full resolution
+  const fullCanvas = document.createElement("canvas");
+  const scale = parseFloat(canvas.dataset.scale) || 1;
+  fullCanvas.width = parseFloat(canvas.dataset.originalWidth) || canvas.width;
+  fullCanvas.height =
+    parseFloat(canvas.dataset.originalHeight) || canvas.height;
+
+  const ctx = fullCanvas.getContext("2d");
+  ctx.drawImage(blurCanvasImage, 0, 0, fullCanvas.width, fullCanvas.height);
+
+  // Apply blurs
+  const scaleUp = 1 / scale;
+  blurRectangles.forEach((rect) => {
+    const x = Math.floor(rect.x * scaleUp);
+    const y = Math.floor(rect.y * scaleUp);
+    const w = Math.floor(rect.width * scaleUp);
+    const h = Math.floor(rect.height * scaleUp);
 
     if (w <= 0 || h <= 0) return;
 
-    // Use pixelation as blur effect (canvas-friendly)
-    const pixelSize = 10;
+    const pixelSize = 15;
     const imgData = ctx.getImageData(x, y, w, h);
 
-    // Simple pixelation blur
     for (let py = 0; py < h; py += pixelSize) {
       for (let px = 0; px < w; px += pixelSize) {
         const pixelIndex = (py * w + px) * 4;
-
-        // Get color from this pixel
         const r = imgData.data[pixelIndex] || 0;
         const g = imgData.data[pixelIndex + 1] || 0;
         const b = imgData.data[pixelIndex + 2] || 0;
 
-        // Fill the block with this color
         for (let by = 0; by < pixelSize && py + by < h; by++) {
           for (let bx = 0; bx < pixelSize && px + bx < w; bx++) {
             const idx = ((py + by) * w + (px + bx)) * 4;
@@ -1056,35 +1702,156 @@ function redrawCanvasWithBlurs(canvas, previewRect = null) {
     }
 
     ctx.putImageData(imgData, x, y);
-
-    // Draw preview border if this is a preview rect
-    if (rect.isPreview) {
-      ctx.strokeStyle = '#2563eb';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([5, 5]);
-      ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
-      ctx.setLineDash([]);
-    }
   });
+
+  return fullCanvas.toDataURL("image/png");
 }
 
-// Undo last blur rectangle
-function undoLastBlur() {
-  blurRectangles.pop();
-  const canvas = document.getElementById('pc-screenshot-canvas');
-  if (canvas) redrawCanvasWithBlurs(canvas);
+async function submitPrice() {
+  if (!formData.productName || !formData.price) {
+    alert("Please fill in all required fields (product name and price)");
+    return;
+  }
+
+  if (!formData.location || !formData.location.city) {
+    alert("Please select a capture location");
+    return;
+  }
+
+  // Check if different shipping is checked but no delivery location selected
+  const differentShipping = document.getElementById("pc-different-shipping");
+  if (
+    differentShipping &&
+    differentShipping.checked &&
+    !formData.deliveryLocation
+  ) {
+    alert(
+      "Please select a delivery location or uncheck 'Shipping to a different location'",
+    );
+    return;
+  }
+
+  const submitBtn = document.getElementById("pc-submit");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Submitting...";
+
+  try {
+    // Get auth token
+    const authResult = await chrome.storage.local.get(["authToken"]);
+    const authToken = authResult.authToken;
+
+    if (!authToken) {
+      showWarningModal(
+        "🔒 Sign-in Required",
+        "Your session is missing or expired. Please sign in to the extension and try again.",
+        "OK",
+      );
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Submit";
+      return;
+    }
+
+    submitBtn.textContent = "Saving price...";
+
+    // Use delivery location if specified, otherwise use capture location
+    const deliveryLoc = formData.deliveryLocation || formData.location;
+
+    const payload = {
+      productName: formData.productName,
+      productId: formData.productId || null,
+      storeName: formData.storeName,
+      price: parseFloat(formData.price),
+      basePrice:
+        formData.basePrice !== null ? parseFloat(formData.basePrice) : null,
+      shippingCost:
+        formData.shippingCost !== null
+          ? parseFloat(formData.shippingCost)
+          : null,
+      fees: formData.fees !== null ? parseFloat(formData.fees) : null,
+      currency: formData.currency,
+      url: formData.productUrl,
+      location: {
+        country: deliveryLoc.country,
+        city: deliveryLoc.city,
+        latitude: deliveryLoc.latitude,
+        longitude: deliveryLoc.longitude,
+      },
+      captureLocation:
+        formData.location && (formData.deliveryLocation ? true : false)
+          ? {
+              country: formData.location.country,
+              city: formData.location.city,
+              latitude: formData.location.latitude,
+              longitude: formData.location.longitude,
+            }
+          : null,
+      isFinalPrice: formData.isFinalPrice || false,
+    };
+
+    const doSavePrice = async (token) => {
+      return chrome.runtime.sendMessage({
+        action: "fetchAPI",
+        url: "http://localhost:3000/api/save-price",
+        options: {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(payload),
+        },
+      });
+    };
+
+    const result = await doSavePrice(authToken);
+
+    if (result.success && result.data.success) {
+      // Clear state
+      screenshotDataUrl = null;
+      croppedDataUrl = null;
+      formData = {};
+      blurRectangles = [];
+      blurCanvasImage = null;
+
+      closeModal();
+      showSuccessModal(
+        "Price Submitted!",
+        "Thank you for contributing to the community.",
+      );
+    } else {
+      // Check if token is expired (401 Unauthorized)
+      if (result.status === 401) {
+        // Clear auth data
+        chrome.storage.local.remove(["authToken", "username"], () => {
+          showWarningModal(
+            "🔒 Session Expired",
+            "Your session has expired. Please sign in again in the extension popup.",
+            "OK",
+          );
+          closeModal();
+        });
+      } else {
+        // Show custom error modal instead of browser alert
+        const errorMessage =
+          result.data?.error || result.error || "Unknown error";
+        const errorDetails = result.data?.details || "";
+        showErrorModal("Failed to Submit Price", errorMessage, errorDetails);
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Submit";
+      }
+    }
+  } catch (error) {
+    showErrorModal(
+      "Failed to Submit Price",
+      "An unexpected error occurred. Please try again.",
+      error.message || "",
+    );
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Submit";
+  }
 }
 
-// Clear all blur rectangles
-function clearAllBlurs() {
-  blurRectangles = [];
-  const canvas = document.getElementById('pc-screenshot-canvas');
-  if (canvas) redrawCanvasWithBlurs(canvas);
-}
-
-// Get processed screenshot data URL (with blurs applied)
-function getProcessedScreenshotDataUrl() {
-  const canvas = document.getElementById('pc-screenshot-canvas');
-  if (!canvas) return null;
-  return canvas.toDataURL('image/png');
+function closeModal() {
+  const modal = document.getElementById("price-commons-modal");
+  if (modal) modal.remove();
 }

@@ -15,7 +15,7 @@ const locationSearch = document.getElementById("location-search");
 const locationSuggestions = document.getElementById("location-suggestions");
 const locationError = document.getElementById("location-error");
 const selectedLocationDisplay = document.getElementById(
-  "selected-location-display"
+  "selected-location-display",
 );
 const selectedLocationText = document.getElementById("selected-location-text");
 const saveLocationBtn = document.getElementById("save-location-btn");
@@ -25,13 +25,23 @@ const capturePriceBtn = document.getElementById("capture-price-btn");
 // Filter DOM Elements
 const locationFilterBtn = document.getElementById("location-filter-btn");
 const locationFilterMenu = document.getElementById("location-filter-menu");
-const locationFilterOptions = document.getElementById("location-filter-options");
+const locationFilterOptions = document.getElementById(
+  "location-filter-options",
+);
 const locationFilterSearch = document.getElementById("location-filter-search");
 const fulfillmentFilterBtn = document.getElementById("fulfillment-filter-btn");
-const fulfillmentFilterMenu = document.getElementById("fulfillment-filter-menu");
-const fulfillmentFilterOptions = document.getElementById("fulfillment-filter-options");
+const fulfillmentFilterMenu = document.getElementById(
+  "fulfillment-filter-menu",
+);
+const fulfillmentFilterOptions = document.getElementById(
+  "fulfillment-filter-options",
+);
 
-console.log("Popup script loaded");
+// Auth DOM Elements
+const signinBtn = document.getElementById("signin-btn");
+const userInfo = document.getElementById("user-info");
+const userEmailEl = document.getElementById("user-email");
+const logoutBtn = document.getElementById("logout-btn");
 
 // State
 let searchTimeout;
@@ -40,10 +50,22 @@ let selectedProduct = null;
 let userLocation = null;
 let tempSelectedLocation = null;
 let allAlternatives = [];
+let authToken = null;
+let userEmail = null;
 
 // Filter State
 let selectedLocations = []; // Array of selected location keys
 let selectedFulfillment = ""; // Empty = all types
+
+// Listen for auth changes from background script
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local") {
+    if (changes.authToken || changes.username) {
+      // Auth state changed, refresh UI
+      initAuth();
+    }
+  }
+});
 
 // Load saved search state
 function loadSavedSearch() {
@@ -63,8 +85,8 @@ function loadSavedSearch() {
         displayAlternatives(alternatives);
       }
     }
-  } catch (error) {
-    console.error("Error loading saved search:", error);
+  } catch {
+    // Failed to load saved search — start fresh
   }
 }
 
@@ -78,15 +100,30 @@ function saveSearchState() {
         query: searchInput.value,
       };
       localStorage.setItem("lastSearch", JSON.stringify(state));
-    } catch (error) {
-      console.error("Error saving search state:", error);
+    } catch {
+      // Failed to save search state — non-critical
     }
   }
 }
 
 // Initialize
-initLocation();
-loadSavedSearch();
+(async () => {
+  await initAuth();
+  initLocation();
+  loadSavedSearch();
+  await checkRecaptureMode();
+})();
+
+// Re-check auth when popup becomes visible (in case auth changed while popup was closed)
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    initAuth();
+  }
+});
+
+// Also re-check auth periodically (every 3 seconds) to catch any changes
+setInterval(initAuth, 3000);
+
 searchInput.addEventListener("input", handleSearchInput);
 clearBtn.addEventListener("click", handleClear);
 editLocationBtn.addEventListener("click", openLocationModal);
@@ -96,11 +133,18 @@ locationSearch.addEventListener("input", handleLocationSearch);
 saveLocationBtn.addEventListener("click", saveLocation);
 capturePriceBtn.addEventListener("click", startPriceCapture);
 
+// Auth event listeners
+signinBtn.addEventListener("click", handleSignin);
+logoutBtn.addEventListener("click", handleLogout);
+
 // Filter event listeners
 locationFilterBtn.addEventListener("click", toggleLocationFilter);
 fulfillmentFilterBtn.addEventListener("click", toggleFulfillmentFilter);
 locationFilterSearch.addEventListener("input", handleLocationFilterSearch);
-fulfillmentFilterOptions.addEventListener("click", handleFulfillmentOptionClick);
+fulfillmentFilterOptions.addEventListener(
+  "click",
+  handleFulfillmentOptionClick,
+);
 
 // Close filter menus when clicking outside
 document.addEventListener("click", (e) => {
@@ -114,21 +158,17 @@ document.addEventListener("click", (e) => {
 
 // Initialize location
 async function initLocation() {
-  console.log("initLocation called");
   try {
     const result = await chrome.storage.local.get(["userLocation"]);
-    console.log("Loaded from storage:", result);
     if (result.userLocation) {
       userLocation = result.userLocation;
-      console.log("Using stored location:", userLocation);
       updateLocationDisplay();
       return;
     }
-  } catch (error) {
-    console.error("Error loading location from storage:", error);
+  } catch {
+    // Failed to load location from storage
   }
 
-  console.log("No stored location, using default");
   userLocation = {
     country: "Israel",
     city: "Tel Aviv",
@@ -182,7 +222,6 @@ function handleSearchInput(e) {
 
 // Search for products
 async function searchProducts(query) {
-  console.log("Searching for:", query);
   try {
     const response = await fetch("http://localhost:3000/api/search-product", {
       method: "POST",
@@ -195,15 +234,13 @@ async function searchProducts(query) {
     }
 
     const data = await response.json();
-    console.log("Search results:", data);
 
     if (data.success && data.products && data.products.length > 0) {
       displaySearchDropdown(data.products);
     } else {
       displayNoResults();
     }
-  } catch (error) {
-    console.error("Search error:", error);
+  } catch {
     displayNoResults();
   }
 }
@@ -217,11 +254,10 @@ function displaySearchDropdown(products) {
     item.className = "dropdown-item";
 
     item.innerHTML = `<div class="dropdown-item-name">${escapeHtml(
-      product.name
+      product.name,
     )}</div>`;
 
     item.addEventListener("click", () => {
-      console.log("Dropdown item clicked:", product);
       selectProduct(product);
     });
 
@@ -240,7 +276,6 @@ function displayNoResults() {
 
 // Select a product from dropdown
 function selectProduct(product) {
-  console.log("selectProduct called with:", product);
   selectedProduct = product;
   searchInput.value = product.name;
   searchDropdown.style.display = "none";
@@ -254,9 +289,6 @@ function selectProduct(product) {
 
 // Load alternatives for selected product
 async function loadAlternatives(product) {
-  console.log("loadAlternatives called with product:", product);
-  console.log("Current userLocation:", userLocation);
-
   emptyState.style.display = "none";
   productResults.style.display = "block";
   productName.textContent = product.name;
@@ -270,7 +302,6 @@ async function loadAlternatives(product) {
       productName: product.name,
       location: userLocation,
     };
-    console.log("Sending payload to API:", payload);
 
     const response = await fetch("http://localhost:3000/api/get-alternatives", {
       method: "POST",
@@ -283,7 +314,6 @@ async function loadAlternatives(product) {
     }
 
     const data = await response.json();
-    console.log("Alternatives response:", data);
 
     if (data.success && data.alternatives && data.alternatives.length > 0) {
       allAlternatives = data.alternatives;
@@ -294,8 +324,7 @@ async function loadAlternatives(product) {
       alternativesList.innerHTML =
         '<div class="empty-state"><p>No prices available</p></div>';
     }
-  } catch (error) {
-    console.error("Error loading alternatives:", error);
+  } catch {
     allAlternatives = [];
     alternativesList.innerHTML =
       '<div class="empty-state"><p>Failed to load alternatives</p></div>';
@@ -345,42 +374,38 @@ function displayAlternatives(alternatives) {
     const total = alt.total || alt.price;
     const currency = alt.currency || "USD";
     const storeName = alt.store_name || "Unknown Store";
-
-    // Format fulfillment type (matching web app)
-    let fulfillmentLabel = "delivery";
-    if (alt.shipping_type === "in_store_only") {
-      fulfillmentLabel = "store";
-    } else if (alt.fulfillment_type === "person") {
-      fulfillmentLabel = "person-used";
-    }
-
-    // Format price type
-    const priceTypeLabel = alt.is_final_price !== false ? "final price" : "non-final price";
+    const isFinal = alt.is_final_price !== false;
+    const dotClass = isFinal ? "price-dot-final" : "price-dot-partial";
 
     // Format price display
-    const priceDisplay = `${getCurrencySymbol(currency)}${parseFloat(total).toFixed(2)}`;
+    const priceDisplay = `${getCurrencySymbol(currency)}${parseFloat(
+      total,
+    ).toFixed(2)}`;
 
-    // Build the left side: "$X.XX / Store / fulfillment / price type"
-    const priceInfoText = `${priceDisplay} / ${escapeHtml(storeName)} / ${fulfillmentLabel} / ${priceTypeLabel}`;
-
-    // Build the right side: "Captured from Location • Time ago"
+    // Build location + time + username meta
     const location = alt.captured_by_city
       ? `${alt.captured_by_city}, ${alt.captured_by_country}`
-      : (alt.captured_by_country || "Unknown");
+      : alt.captured_by_country || "Unknown";
     const timeAgo = alt.created_at ? formatTimeAgo(alt.created_at) : "";
-    const metaText = `Captured from ${escapeHtml(location)}${timeAgo ? ` • ${timeAgo}` : ""}`;
+    const username = alt.submitted_by_username || "";
+
+    let metaParts = [escapeHtml(location)];
+    if (timeAgo) metaParts.push(timeAgo);
+    if (username) metaParts.push(escapeHtml(username));
+    const metaText = metaParts.join(" • ");
+
+    // Build left side content (dot + price + @ store)
+    const leftContent = `<span class="price-dot ${dotClass}"></span><span class="price-amount">${priceDisplay}</span><span class="price-store">@ ${escapeHtml(storeName)}</span>`;
 
     // Create the row HTML
     if (alt.source_url) {
       row.innerHTML = `
-        <div class="price-info">
-          <a href="${alt.source_url}" target="_blank" rel="noopener noreferrer">${priceInfoText}</a>
-        </div>
+        <a href="${alt.source_url}" target="_blank" rel="noopener noreferrer" class="price-left">${leftContent}</a>
         <div class="price-meta">${metaText}</div>
       `;
     } else {
       row.innerHTML = `
-        <div class="price-info">${priceInfoText}</div>
+        <div class="price-left">${leftContent}</div>
         <div class="price-meta">${metaText}</div>
       `;
     }
@@ -485,7 +510,9 @@ function populateLocationFilterOptions(searchQuery = "") {
   const query = searchQuery.toLowerCase();
 
   let html = `
-    <div class="filter-option ${selectedLocations.length === 0 ? 'selected' : ''}" data-value="">
+    <div class="filter-option ${
+      selectedLocations.length === 0 ? "selected" : ""
+    }" data-value="">
       <span>Worldwide</span>
       <svg class="filter-check" viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
@@ -497,14 +524,18 @@ function populateLocationFilterOptions(searchQuery = "") {
     // Filter by search query
     const cities = Array.from(locationsByCountry[country]).sort();
     const countryMatches = !query || country.toLowerCase().includes(query);
-    const matchingCities = cities.filter(city => !query || city.toLowerCase().includes(query) || countryMatches);
+    const matchingCities = cities.filter(
+      (city) => !query || city.toLowerCase().includes(query) || countryMatches,
+    );
 
     if (!countryMatches && matchingCities.length === 0) return;
 
     const isCountrySelected = selectedLocations.includes(country);
 
     html += `
-      <div class="filter-option country ${isCountrySelected ? 'selected' : ''}" data-value="${escapeHtml(country)}" data-type="country">
+      <div class="filter-option country ${
+        isCountrySelected ? "selected" : ""
+      }" data-value="${escapeHtml(country)}" data-type="country">
         <span>${escapeHtml(country)}</span>
         <svg class="filter-check" viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
@@ -518,7 +549,9 @@ function populateLocationFilterOptions(searchQuery = "") {
       const isCitySelected = selectedLocations.includes(cityKey);
 
       html += `
-        <div class="filter-option city ${isCitySelected ? 'selected' : ''}" data-value="${escapeHtml(cityKey)}" data-type="city">
+        <div class="filter-option city ${
+          isCitySelected ? "selected" : ""
+        }" data-value="${escapeHtml(cityKey)}" data-type="city">
           <span>${escapeHtml(city)}</span>
           <svg class="filter-check" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
@@ -605,13 +638,15 @@ function updateFulfillmentFilterUI() {
   fulfillmentFilterBtn.querySelector("span").textContent = buttonText;
 
   // Update selected state in menu
-  fulfillmentFilterOptions.querySelectorAll(".filter-option").forEach((option) => {
-    if (option.dataset.value === selectedFulfillment) {
-      option.classList.add("selected");
-    } else {
-      option.classList.remove("selected");
-    }
-  });
+  fulfillmentFilterOptions
+    .querySelectorAll(".filter-option")
+    .forEach((option) => {
+      if (option.dataset.value === selectedFulfillment) {
+        option.classList.add("selected");
+      } else {
+        option.classList.remove("selected");
+      }
+    });
 }
 
 // Apply filters and re-display alternatives
@@ -637,7 +672,9 @@ function applyFilters() {
     // Fulfillment filter
     let fulfillmentMatch = !selectedFulfillment;
     if (!fulfillmentMatch) {
-      const altFulfillment = alt.fulfillment_type || (alt.shipping_type === "in_store_only" ? "store" : "delivery");
+      const altFulfillment =
+        alt.fulfillment_type ||
+        (alt.shipping_type === "in_store_only" ? "store" : "delivery");
       fulfillmentMatch = altFulfillment === selectedFulfillment;
     }
 
@@ -702,13 +739,13 @@ async function searchLocationAddress(query) {
 
   try {
     const response = await fetch(
-      `http://localhost:3000/api/geocode?q=${encodeURIComponent(query)}`
+      `http://localhost:3000/api/geocode?q=${encodeURIComponent(query)}`,
     );
 
     if (response.status === 429) {
       const data = await response.json();
       showLocationError(
-        data.message || "Rate limit exceeded. Please try again later."
+        data.message || "Rate limit exceeded. Please try again later.",
       );
       return;
     }
@@ -719,10 +756,9 @@ async function searchLocationAddress(query) {
 
     const data = await response.json();
     displayLocationSuggestions(data.features || []);
-  } catch (error) {
-    console.error("Error fetching location suggestions:", error);
+  } catch {
     showLocationError(
-      "Failed to fetch location suggestions. Please try again."
+      "Failed to fetch location suggestions. Please try again.",
     );
   }
 }
@@ -800,13 +836,11 @@ async function saveLocation() {
   if (!tempSelectedLocation) return;
 
   userLocation = { ...tempSelectedLocation };
-  console.log("Saving location to storage:", userLocation);
 
   try {
     await chrome.storage.local.set({ userLocation });
-    console.log("Location saved successfully");
-  } catch (error) {
-    console.error("Error saving location to storage:", error);
+  } catch {
+    // Failed to persist location — will use in-memory value
   }
 
   updateLocationDisplay();
@@ -817,58 +851,241 @@ async function saveLocation() {
   }
 }
 
-// Start price capture
-async function startPriceCapture() {
+// Check if this tab is in recapture mode and auto-start if so
+async function checkRecaptureMode() {
   try {
     const [tab] = await chrome.tabs.query({
       active: true,
       currentWindow: true,
     });
 
-    // Check both chrome.storage.local and localStorage for existing data
-    const result = await chrome.storage.local.get(["priceCommonsCaptureForm"]);
-    const savedData = result.priceCommonsCaptureForm;
+    // Check if this tab is flagged for recapture
+    const result = await chrome.storage.session.get([`recapture_${tab.id}`]);
 
-    // Check if we have a selected product in localStorage
-    let productData = null;
-    try {
-      const savedState = localStorage.getItem("lastSearch");
-      if (savedState) {
-        const { product } = JSON.parse(savedState);
-        if (product) {
-          productData = product;
-        }
-      }
-    } catch (error) {
-      console.error("Error reading product from localStorage:", error);
+    if (result[`recapture_${tab.id}`]) {
+      // Remove the flag
+      await chrome.storage.session.remove([`recapture_${tab.id}`]);
+
+      // Wait a bit to ensure auth is fully loaded
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Auto-start capture
+      await startPriceCapture();
     }
+  } catch {
+    // Failed to check recapture mode — non-critical
+  }
+}
 
-    // If we have either saved form data OR a selected product, open modal with that data
-    if (savedData || productData) {
-      // Sync the product data to chrome.storage.local if we have it
-      if (productData && !savedData) {
-        await chrome.storage.local.set({
-          priceCommonsCaptureForm: {
-            productName: productData.name,
-            productId: productData.id,
-          },
-        });
-      }
+// Start price capture - LLM-powered flow
+async function startPriceCapture() {
+  // Check if user is authenticated
+  if (!authToken) {
+    showAuthRequiredModal();
+    return;
+  }
 
-      // Open modal directly with existing data
-      await chrome.tabs.sendMessage(tab.id, {
-        action: "openPriceModal",
-        productData: productData,
-      });
-    } else {
-      // Otherwise, start fresh price capture
-      await chrome.tabs.sendMessage(tab.id, { action: "startPriceCapture" });
-    }
+  try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+
+    // Start the LLM capture flow
+    await chrome.tabs.sendMessage(tab.id, {
+      action: "startPriceCapture",
+    });
 
     // Close the popup
     window.close();
   } catch (error) {
-    console.error("Error starting price capture:", error);
-    alert("Failed to start price capture. Please try again.");
+    alert(
+      "Failed to start price capture: " +
+        error.message +
+        "\n\nMake sure you're on a product page and reload the page if needed.",
+    );
   }
+}
+
+// Initialize authentication
+async function initAuth() {
+  try {
+    // First, try to get auth from chrome.storage
+    const result = await chrome.storage.local.get(["authToken", "username"]);
+
+    // Also check if user has open tab with localhost:3000 and check localStorage there
+    try {
+      const tabs = await chrome.tabs.query({ url: "http://localhost:3000/*" });
+      if (tabs.length > 0) {
+        // Execute script to check localStorage
+        const [response] = await chrome.scripting.executeScript({
+          target: { tabId: tabs[0].id },
+          func: () => {
+            const authData = localStorage.getItem("priceGitExtensionAuth");
+            if (authData) {
+              const { authToken, refreshToken, username } =
+                JSON.parse(authData);
+              return { authToken, refreshToken, username };
+            }
+            return null;
+          },
+        });
+
+        // If we found auth in localStorage, sync it to extension storage
+        if (response?.result) {
+          await chrome.storage.local.set({
+            authToken: response.result.authToken,
+            refreshToken: response.result.refreshToken,
+            username: response.result.username,
+          });
+          authToken = response.result.authToken;
+          userEmail = response.result.username;
+
+          // Show user info
+          signinBtn.style.display = "none";
+          userInfo.style.display = "flex";
+          userEmailEl.textContent = response.result.username;
+          return;
+        }
+        // If web app localStorage is empty but extension has auth, keep extension auth
+        // The web-auth.js content script will handle logout detection via storage events
+      }
+    } catch {
+      // Could not check web app localStorage — expected if no web app tab open
+    }
+
+    // Use extension storage auth if available
+    if (result.authToken && result.username) {
+      // Validate token before showing as logged in
+      try {
+        const validation = await chrome.runtime.sendMessage({
+          action: "validateToken",
+        });
+
+        if (validation.valid) {
+          // Re-fetch auth from storage in case it was refreshed
+          const updatedAuth = await chrome.storage.local.get([
+            "authToken",
+            "username",
+          ]);
+          authToken = updatedAuth.authToken;
+          userEmail = updatedAuth.username;
+
+          // Show user info, hide sign in button
+          signinBtn.style.display = "none";
+          userInfo.style.display = "flex";
+          userEmailEl.textContent = updatedAuth.username;
+        } else {
+          // Clear invalid auth
+          await chrome.storage.local.remove([
+            "authToken",
+            "refreshToken",
+            "username",
+          ]);
+          authToken = null;
+          userEmail = null;
+          // Show sign in button, hide user info
+          signinBtn.style.display = "block";
+          userInfo.style.display = "none";
+        }
+      } catch {
+        // On error, assume invalid and clear
+        await chrome.storage.local.remove([
+          "authToken",
+          "refreshToken",
+          "username",
+        ]);
+        authToken = null;
+        userEmail = null;
+        signinBtn.style.display = "block";
+        userInfo.style.display = "none";
+      }
+    } else {
+      // Show sign in button, hide user info
+      signinBtn.style.display = "block";
+      userInfo.style.display = "none";
+    }
+  } catch {
+    signinBtn.style.display = "block";
+    userInfo.style.display = "none";
+  }
+}
+
+// Handle signin button
+function handleSignin() {
+  chrome.tabs.create({
+    url: "http://localhost:3000/login?source=extension",
+  });
+}
+
+// Handle logout
+async function handleLogout() {
+  try {
+    // Clear extension storage only - extension has independent session
+    await chrome.storage.local.remove([
+      "authToken",
+      "refreshToken",
+      "username",
+    ]);
+    authToken = null;
+    userEmail = null;
+
+    // Clear web app localStorage if a web app tab is open to prevent re-sync
+    try {
+      const tabs = await chrome.tabs.query({ url: "http://localhost:3000/*" });
+      if (tabs.length > 0) {
+        await chrome.scripting.executeScript({
+          target: { tabId: tabs[0].id },
+          func: () => {
+            localStorage.removeItem("priceGitExtensionAuth");
+          },
+        });
+      }
+    } catch {
+      // Could not clear web app auth — non-critical
+    }
+
+    // Update UI
+    signinBtn.style.display = "block";
+    userInfo.style.display = "none";
+  } catch {
+    // Logout failed — UI may be stale
+  }
+}
+
+// Show auth required modal
+function showAuthRequiredModal() {
+  // Remove any existing auth modal
+  const existing = document.getElementById("auth-modal");
+  if (existing) {
+    existing.remove();
+  }
+
+  const modal = document.createElement("div");
+  modal.id = "auth-modal";
+  modal.className = "auth-modal";
+  modal.innerHTML = `
+    <div class="auth-modal-content">
+      <div class="auth-icon">🔒</div>
+      <h2 class="auth-title">Sign in Required</h2>
+      <p class="auth-message">Please sign in to capture and share prices with the community.</p>
+      <div class="auth-buttons">
+        <button class="auth-signin-btn" id="auth-signin">Sign in</button>
+        <button class="auth-cancel-btn" id="auth-cancel">Cancel</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  // Handle sign in button
+  document.getElementById("auth-signin").addEventListener("click", () => {
+    handleSignin();
+    modal.remove();
+  });
+
+  // Handle cancel button
+  document.getElementById("auth-cancel").addEventListener("click", () => {
+    modal.remove();
+  });
 }

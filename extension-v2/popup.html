@@ -15,7 +15,23 @@
         <h1 class="header-title">🪙 PriceGit</h1>
         <p class="header-subtitle">Shared Price Knowledge</p>
       </div>
-      <button id="capture-price-btn" class="capture-price-btn">Capture price</button>
+      
+      <div class="header-actions">
+        <!-- Auth info (always visible) -->
+        <div class="auth-info">
+          <!-- Sign in button (shown when not logged in) -->
+          <button id="signin-btn" class="signin-btn" style="display: none;">Sign in</button>
+          
+          <!-- User email + logout (shown when logged in) -->
+          <div id="user-info" class="user-info-compact" style="display: none;">
+            <span id="user-email" class="user-email-text"></span>
+            <button id="logout-btn" class="logout-link">Logout</button>
+          </div>
+        </div>
+        
+        <!-- Capture price button (always visible) -->
+        <button id="capture-price-btn" class="capture-price-btn">Capture price</button>
+      </div>
     </div>
     
     <!-- Search Bar -->
@@ -34,7 +50,7 @@
       <div class="location-info-container">
         <span>Showing final prices for</span>
         <span class="location-text" id="location-text">Loading...</span>
-        <span>including taxes and shipping.</span>
+ 
         <button id="edit-location-btn" class="edit-location-link">Edit address</button>
       </div>
     </div>

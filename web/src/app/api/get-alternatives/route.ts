@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getCorsHeaders } from "@/lib/cors";
+import { logApiCall } from "@/lib/apiLogger";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -7,36 +9,47 @@ const supabase = createClient(
 );
 
 // Handle CORS preflight
-export async function OPTIONS() {
+export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, {
     status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    },
+    headers: getCorsHeaders(request),
   });
 }
 
 export async function POST(request: NextRequest) {
+  const corsHeaders = getCorsHeaders(request);
+  const startTime = Date.now();
   try {
     const { productName, productId, url, location } = await request.json();
-
-    console.log("Get alternatives request:", {
-      productName,
-      productId,
-      location,
-    });
 
     if ((!productName && !productId) || !location) {
       return NextResponse.json(
         { error: "Missing required fields" },
-        {
-          status: 400,
-          headers: {
-            "Access-Control-Allow-Origin": "*",
-          },
-        }
+        { status: 400, headers: corsHeaders }
+      );
+    }
+    if (productName && (typeof productName !== "string" || productName.length > 500)) {
+      return NextResponse.json(
+        { error: "Product name must be a string under 500 characters" },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+    if (productId && (typeof productId !== "string" || productId.length > 100)) {
+      return NextResponse.json(
+        { error: "Product ID must be a string under 100 characters" },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+    if (location.country && (typeof location.country !== "string" || location.country.length > 100)) {
+      return NextResponse.json(
+        { error: "Country must be a string under 100 characters" },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+    if (location.city && (typeof location.city !== "string" || location.city.length > 100)) {
+      return NextResponse.json(
+        { error: "City must be a string under 100 characters" },
+        { status: 400, headers: corsHeaders }
       );
     }
 
@@ -55,6 +68,7 @@ export async function POST(request: NextRequest) {
         product_type,
         currency,
         is_final_price,
+        submitted_by,
         products (
           id,
           name
@@ -64,6 +78,9 @@ export async function POST(request: NextRequest) {
           name,
           country,
           city
+        ),
+        users:submitted_by (
+          username
         )
       `
       )
@@ -82,20 +99,13 @@ export async function POST(request: NextRequest) {
       .order("created_at", { ascending: false })
       .limit(20);
 
-    console.log("Price history results:", {
-      count: priceHistory?.length || 0,
-      data: priceHistory,
-    });
-
     if (error) {
       console.error("Get alternatives error:", error);
       return NextResponse.json(
         { error: "Failed to get alternatives" },
         {
           status: 500,
-          headers: {
-            "Access-Control-Allow-Origin": "*",
-          },
+          headers: corsHeaders,
         }
       );
     }
@@ -120,6 +130,7 @@ export async function POST(request: NextRequest) {
         const product = Array.isArray(item.products)
           ? item.products[0]
           : item.products;
+        const user = Array.isArray(item.users) ? item.users[0] : item.users;
 
         priceMap.set(locationKey, {
           id: item.id,
@@ -137,6 +148,7 @@ export async function POST(request: NextRequest) {
           source_url: item.source_url,
           created_at: item.created_at,
           product_name: product?.name,
+          submitted_by_username: user?.username || null,
         });
       }
     });
@@ -149,29 +161,28 @@ export async function POST(request: NextRequest) {
     // Sort by price (cheapest first)
     alternatives.sort((a, b) => a.price - b.price);
 
+    logApiCall("get-alternatives", 200, Date.now() - startTime);
     return NextResponse.json(
       {
         success: true,
         alternatives: alternatives,
       },
       {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: corsHeaders,
       }
     );
   } catch (error) {
     console.error("Get alternatives error:", error);
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    logApiCall("get-alternatives", 500, Date.now() - startTime, null, errorMsg);
     return NextResponse.json(
       {
         error: "Failed to get alternatives",
-        details: error instanceof Error ? error.message : "Unknown error",
+        details: errorMsg,
       },
       {
         status: 500,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: corsHeaders,
       }
     );
   }

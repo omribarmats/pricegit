@@ -16,9 +16,10 @@
     "48": "icon.png",
     "128": "icon.png"
   },
-  "permissions": ["storage", "activeTab", "tabs"],
+  "permissions": ["storage", "activeTab", "tabs", "scripting"],
   "host_permissions": [
-    "http://localhost:3000/*"
+    "http://localhost:3000/*",
+    "https://*.supabase.co/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -28,6 +29,11 @@
       "matches": ["<all_urls>"],
       "js": ["content/content.js"],
       "css": ["content/content.css"]
+    },
+    {
+      "matches": ["http://localhost:3000/*"],
+      "js": ["content/web-auth.js"],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
@@ -35,5 +41,8 @@
       "resources": ["icon.png"],
       "matches": ["<all_urls>"]
     }
-  ]
+  ],
+  "externally_connectable": {
+    "matches": ["http://localhost:3000/*"]
+  }
 }

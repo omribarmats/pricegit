@@ -36,10 +36,10 @@ interface PriceSubmission {
   status: "pending" | "approved" | "rejected";
   reviewed_at: string | null;
   rejection_reason: string | null;
+  screenshot_url: string | null;
   products: {
     id: string;
     name: string;
-    image_url: string | null;
   };
   stores: {
     id: string;
@@ -75,13 +75,13 @@ export default function UserProfileClient({
   const [activeTab, setActiveTab] = useState<Tab>("starred");
 
   const pendingSubmissions = priceSubmissions.filter(
-    (p) => p.status === "pending"
+    (p) => p.status === "pending",
   );
   const approvedSubmissions = priceSubmissions.filter(
-    (p) => p.status === "approved"
+    (p) => p.status === "approved",
   );
   const rejectedSubmissions = priceSubmissions.filter(
-    (p) => p.status === "rejected"
+    (p) => p.status === "rejected",
   );
 
   return (
@@ -170,7 +170,7 @@ export default function UserProfileClient({
                       <Link
                         key={item.id}
                         href={`/product/${item.products.id}/${slugify(
-                          item.products.name
+                          item.products.name,
                         )}`}
                         className="flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition-colors"
                       >

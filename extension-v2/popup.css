@@ -7,8 +7,9 @@
 body {
   width: 500px;
   min-height: 400px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
   font-size: 14px;
   color: #374151;
   background: #ffffff;
@@ -47,6 +48,66 @@ body {
   font-size: 24px;
   font-weight: 700;
   color: #111827;
+}
+
+/* Header Actions */
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.auth-info {
+  display: flex;
+  align-items: center;
+}
+
+/* Sign in button (compact) */
+.signin-btn {
+  padding: 6px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: white;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.signin-btn:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+/* User info compact */
+.user-info-compact {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  padding-right: 8px;
+}
+
+.user-email-text {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.logout-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #7c3aed;
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.logout-link:hover {
+  color: #6d28d9;
 }
 
 .header-subtitle {
@@ -176,7 +237,9 @@ body {
   background: white;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  box-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.1),
+    0 4px 6px -2px rgba(0, 0, 0, 0.05);
   max-height: 320px;
   overflow-y: auto;
   z-index: 50;
@@ -278,7 +341,9 @@ body {
   background: white;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  box-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.1),
+    0 4px 6px -2px rgba(0, 0, 0, 0.05);
   z-index: 100;
   max-height: 320px;
   overflow: hidden;
@@ -384,11 +449,12 @@ body {
 
 .price-row {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px 16px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 16px;
   background: white;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid #e5e7eb;
   transition: background-color 0.15s;
 }
 
@@ -400,39 +466,54 @@ body {
   border-bottom: none;
 }
 
-/* Left side: Price info */
-.price-info {
+/* Left side: Dot + Price + Store */
+.price-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 14px;
   color: #111827;
-}
-
-.price-info a {
-  color: #111827;
   text-decoration: none;
-  transition: all 0.15s;
+  white-space: nowrap;
+  transition: color 0.15s;
 }
 
-.price-info a:hover {
+a.price-left:hover {
   color: #2563eb;
-  text-decoration: underline;
-  text-underline-offset: 4px;
+}
+
+.price-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px #d1d5db;
+}
+
+.price-dot-final {
+  background-color: #10b981;
+}
+
+.price-dot-partial {
+  background-color: #f59e0b;
+}
+
+.price-amount {
+  font-weight: 500;
+}
+
+.price-store {
+  color: #6b7280;
 }
 
 /* Right side: Metadata */
 .price-meta {
   font-size: 13px;
-  color: #6b7280;
-}
-
-.price-meta a {
-  color: #6b7280;
-  text-decoration: none;
-  transition: all 0.15s;
-}
-
-.price-meta a:hover {
-  color: #2563eb;
-  text-decoration: underline;
+  color: #9ca3af;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* No Results States */
@@ -531,7 +612,9 @@ body {
   background: white;
   border-radius: 12px;
   padding: 24px;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  box-shadow:
+    0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 10px 10px -5px rgba(0, 0, 0, 0.04);
 }
 
 .modal-header {
@@ -596,7 +679,9 @@ body {
   border-radius: 8px;
   max-height: 200px;
   overflow-y: auto;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -1px rgba(0, 0, 0, 0.06);
 }
 
 .location-suggestion-item {
@@ -686,4 +771,111 @@ body {
 .btn-save:disabled {
   background-color: #9ca3af;
   cursor: not-allowed;
+}
+
+/* Auth Required Modal */
+.auth-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: auth-modal-fade-in 0.15s ease-out;
+}
+
+@keyframes auth-modal-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.auth-modal-content {
+  background: white;
+  border-radius: 12px;
+  padding: 32px;
+  max-width: 340px;
+  width: 90%;
+  text-align: center;
+  box-shadow:
+    0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  animation: auth-modal-slide-in 0.2s ease-out;
+}
+
+@keyframes auth-modal-slide-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.auth-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.auth-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0 0 8px 0;
+}
+
+.auth-message {
+  font-size: 14px;
+  color: #6b7280;
+  margin: 0 0 24px 0;
+  line-height: 1.5;
+}
+
+.auth-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.auth-signin-btn,
+.auth-cancel-btn {
+  padding: 10px 24px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: none;
+  font-family: inherit;
+}
+
+.auth-signin-btn {
+  background: #3b82f6;
+  color: white;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.auth-signin-btn:hover {
+  background: #2563eb;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+}
+
+.auth-cancel-btn {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+}
+
+.auth-cancel-btn:hover {
+  background: #e5e7eb;
+  border-color: #d1d5db;
 }

@@ -45,7 +45,7 @@ export function PriceChart({ data, source }: PriceChartProps) {
     }));
 
   return (
-    <div className="w-full h-80 bg-white rounded-2xl p-6">
+    <div className="w-full h-56 sm:h-80 bg-white rounded-2xl p-4 sm:p-6">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
           data={chartData}

@@ -425,8 +425,7 @@ export function ProductList({
                     return (
                       <div
                         key={latest.source}
-                        className="grid grid-cols-[minmax(100px,auto)_minmax(150px,auto)_minmax(40px,auto)_minmax(100px,auto)] gap-8 py-4 border-b border-gray-200 last:border-b-0"
-                        style={{ alignItems: "center" }}
+                        className="flex flex-wrap items-center gap-2 sm:grid sm:grid-cols-[minmax(100px,auto)_minmax(150px,auto)_minmax(40px,auto)_minmax(100px,auto)] sm:gap-8 py-4 border-b border-gray-200 last:border-b-0"
                       >
                         {/* Price - left aligned with link */}
                         <div className="flex items-center justify-start self-center">
@@ -488,7 +487,8 @@ export function ProductList({
                             className="text-gray-700 hover:text-gray-500 cursor-pointer"
                             title="View price history"
                           >
-                            price history
+                            <span className="hidden sm:inline">price history</span>
+                            <span className="sm:hidden">📈</span>
                           </button>
                         </div>
                       </div>

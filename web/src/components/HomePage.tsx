@@ -23,6 +23,9 @@ interface RecentActivity {
   productId: string;
   productName: string;
   username: string;
+  price: number;
+  storeName: string;
+  storeUrl: string;
   createdAt: string;
 }
 
@@ -109,7 +112,7 @@ export function HomePage({
       try {
         const { data, error } = await supabase
           .from("products")
-          .select("id, name, image_url")
+          .select("id, name")
           .ilike("name", `%${query}%`)
           .limit(5);
 
@@ -169,157 +172,187 @@ export function HomePage({
 
   return (
     <div className="bg-white">
-      <main className="max-w-4xl mx-auto px-6 py-16">
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-16">
         {/* Hero Text */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-semibold text-gray-900 mb-4">
-            Community Verified Prices
+        <div className="text-center mb-6 sm:mb-8">
+          <h1 className="text-2xl sm:text-4xl font-bold text-gray-900 mb-3 sm:mb-4">
+            Shared Price Knowledge
           </h1>
-          <p className="text-lg text-gray-600">
-            Get prices from around the world,
-            <br />
-            Captured by others - relevant to your location
+          <p className="text-base sm:text-lg text-gray-600 mb-3">
+            Compare prices submitted by shoppers near you
           </p>
+          <div className="flex items-center justify-center gap-2 sm:gap-4 text-xs sm:text-sm text-gray-600">
+            <span className="flex items-center gap-1">✓ Bootstrapped</span>
+            <span className="flex items-center gap-1">✓ Open-source</span>
+            <span className="flex items-center gap-1">
+              ✓ Community Verified
+            </span>
+          </div>
         </div>
 
         {/* Search Bar */}
-        <div ref={searchRef} className="relative mb-4 max-w-2xl mx-auto">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search for products"
-            className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-          />
+        <div className="max-w-2xl mx-auto mb-8 sm:mb-12">
+          <div ref={searchRef} className="relative mb-2">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search for products"
+              className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm sm:text-base bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+            />
 
-          {/* Suggestions Dropdown */}
-          {isOpen && suggestions.length > 0 && (
-            <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-80 overflow-y-auto">
-              {suggestions.map((product) => (
+            {/* Suggestions Dropdown */}
+            {isOpen && suggestions.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-80 overflow-y-auto">
+                {suggestions.map((product) => (
+                  <button
+                    key={product.id}
+                    onClick={() => handleProductClick(product)}
+                    className="w-full px-4 py-3 text-left hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
+                  >
+                    <div className="font-medium text-gray-900">
+                      {product.name}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Loading state */}
+            {isSearching && query.trim().length >= 2 && (
+              <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-4 text-sm text-gray-500">
+                Searching...
+              </div>
+            )}
+
+            {/* No results */}
+            {isOpen &&
+              !isSearching &&
+              query.trim().length >= 2 &&
+              suggestions.length === 0 && (
+                <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-4 text-sm text-gray-500">
+                  No products found matching &quot;{query}&quot;
+                </div>
+              )}
+          </div>
+
+          {/* Current Location */}
+          <div className="text-left text-xs sm:text-sm text-gray-500 mt-1">
+            <span className="hidden sm:inline">Current location: </span>
+            {userLocation ? (
+              <>
+                <span>
+                  {userLocation.city}, {userLocation.country}
+                </span>
                 <button
-                  key={product.id}
-                  onClick={() => handleProductClick(product)}
-                  className="w-full px-4 py-3 text-left hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
+                  onClick={() => setIsLocationModalOpen(true)}
+                  className="text-blue-600 hover:text-blue-700 ml-2 cursor-pointer"
                 >
-                  <div className="font-medium text-gray-900">{product.name}</div>
+                  Edit
                 </button>
-              ))}
-            </div>
-          )}
-
-          {/* Loading state */}
-          {isSearching && query.trim().length >= 2 && (
-            <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-4 text-sm text-gray-500">
-              Searching...
-            </div>
-          )}
-
-          {/* No results */}
-          {isOpen && !isSearching && query.trim().length >= 2 && suggestions.length === 0 && (
-            <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-4 text-sm text-gray-500">
-              No products found matching &quot;{query}&quot;
-            </div>
-          )}
-        </div>
-
-        {/* Current Location */}
-        <div className="text-center text-sm text-gray-500 mb-12">
-          Current Location:{" "}
-          {userLocation ? (
-            <>
-              <span>
-                {userLocation.city}, {userLocation.country}
-              </span>
+              </>
+            ) : (
               <button
                 onClick={() => setIsLocationModalOpen(true)}
-                className="text-blue-600 hover:text-blue-700 ml-2"
+                className="text-blue-600 hover:text-blue-700 cursor-pointer"
               >
-                Edit
+                Set location
               </button>
-            </>
+            )}
+          </div>
+        </div>
+
+        {/* Recent Activity */}
+        <div className="mb-8 sm:mb-12">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900 text-center mb-3 sm:mb-4">
+            Recent activity
+          </h2>
+          {recentActivity.length > 0 ? (
+            <div className="space-y-2">
+              {recentActivity.map((activity) => (
+                <div
+                  key={activity.id}
+                  className="w-full flex flex-col sm:flex-row items-start sm:items-center justify-between py-2 px-3 sm:px-4 bg-[#F5EDF5]/20 rounded-lg text-xs sm:text-sm gap-1 sm:gap-0"
+                >
+                  <span className="text-gray-600">
+                    <a
+                      href={`/user/${activity.username}`}
+                      className="text-gray-900 hover:text-blue-600 transition-colors"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {activity.username}
+                    </a>{" "}
+                    captured{" "}
+                    <a
+                      href={activity.storeUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-gray-900 hover:text-blue-600 transition-colors"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      ${(activity.price || 0).toFixed(2)} @ {activity.storeName}
+                    </a>{" "}
+                    for{" "}
+                    <a
+                      href={`/product/${activity.productId}/${slugify(activity.productName)}`}
+                      className="text-blue-600 hover:text-blue-700 transition-colors"
+                    >
+                      {activity.productName}
+                    </a>
+                  </span>
+                  <span className="text-gray-400 text-xs">
+                    {formatTimeAgo(activity.createdAt)}
+                  </span>
+                </div>
+              ))}
+            </div>
           ) : (
-            <button
-              onClick={() => setIsLocationModalOpen(true)}
-              className="text-blue-600 hover:text-blue-700"
-            >
-              Set location
-            </button>
+            <p className="text-center text-gray-500 text-sm">
+              No recent activity yet. Be the first to capture a price!
+            </p>
           )}
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-4 mb-12">
-          <div className="text-center p-4 bg-gray-50 rounded-lg">
-            <div className="text-2xl font-bold text-gray-900">{stats.productCount}</div>
-            <div className="text-sm text-gray-500">Products tracked</div>
+        <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-8 sm:mb-12">
+          <div className="text-center p-2 sm:p-4 bg-[#F5EDF5]/20 rounded-lg">
+            <div className="text-lg sm:text-2xl font-bold text-gray-900">
+              {stats.productCount}
+            </div>
+            <div className="text-xs sm:text-sm text-gray-500">
+              Products tracked
+            </div>
           </div>
-          <div className="text-center p-4 bg-gray-50 rounded-lg">
-            <div className="text-2xl font-bold text-gray-900">{stats.priceCount}</div>
-            <div className="text-sm text-gray-500">Prices captured</div>
+          <div className="text-center p-2 sm:p-4 bg-[#F5EDF5]/20 rounded-lg">
+            <div className="text-lg sm:text-2xl font-bold text-gray-900">
+              {stats.priceCount}
+            </div>
+            <div className="text-xs sm:text-sm text-gray-500">
+              Prices captured
+            </div>
           </div>
-          <div className="text-center p-4 bg-gray-50 rounded-lg">
-            <div className="text-2xl font-bold text-gray-900">{stats.userCount}</div>
-            <div className="text-sm text-gray-500">Contributors</div>
+          <div className="text-center p-2 sm:p-4 bg-[#F5EDF5]/20 rounded-lg">
+            <div className="text-lg sm:text-2xl font-bold text-gray-900">
+              {stats.userCount}
+            </div>
+            <div className="text-xs sm:text-sm text-gray-500">Contributors</div>
           </div>
         </div>
 
         {/* Popular Products */}
         {popularProducts.length > 0 && (
-          <div className="mb-12">
-            <p className="text-center text-sm text-gray-500 mb-3">Popular products:</p>
+          <div className="mb-8 sm:mb-12">
+            <p className="text-center text-xs sm:text-sm text-gray-500 mb-3">
+              Popular products:
+            </p>
             <div className="flex flex-wrap justify-center gap-2">
               {popularProducts.map((product) => (
                 <button
                   key={product.id}
                   onClick={() => handleProductClick(product)}
-                  className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm rounded-full transition-colors cursor-pointer"
+                  className="px-2 sm:px-3 py-1 sm:py-1.5 bg-[#F5EDF5]/20 hover:bg-[#F5EDF5]/30 text-gray-700 text-xs sm:text-sm rounded-full transition-colors cursor-pointer"
                 >
                   {product.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* How It Works */}
-        <div className="mb-12">
-          <h2 className="text-lg font-semibold text-gray-900 text-center mb-6">How it works</h2>
-          <div className="grid grid-cols-3 gap-6">
-            <div className="text-center">
-              <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-semibold">1</div>
-              <h3 className="font-medium text-gray-900 mb-1">Capture</h3>
-              <p className="text-sm text-gray-500">Use our browser extension to capture prices while you shop online</p>
-            </div>
-            <div className="text-center">
-              <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-semibold">2</div>
-              <h3 className="font-medium text-gray-900 mb-1">Share</h3>
-              <p className="text-sm text-gray-500">Your captured prices are shared with the community automatically</p>
-            </div>
-            <div className="text-center">
-              <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-semibold">3</div>
-              <h3 className="font-medium text-gray-900 mb-1">Compare</h3>
-              <p className="text-sm text-gray-500">See prices from different stores and locations to find the best deal</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Recent Activity */}
-        {recentActivity.length > 0 && (
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900 text-center mb-4">Recent activity</h2>
-            <div className="space-y-2">
-              {recentActivity.map((activity) => (
-                <button
-                  key={activity.id}
-                  onClick={() => router.push(`/product/${activity.productId}/${slugify(activity.productName)}`)}
-                  className="w-full flex items-center justify-between py-2 px-4 bg-gray-50 hover:bg-gray-100 rounded-lg text-sm cursor-pointer transition-colors"
-                >
-                  <span className="text-gray-600">
-                    <span className="font-medium text-gray-900">{activity.username}</span>
-                    {" "}added a price for{" "}
-                    <span className="font-medium text-blue-600 hover:text-blue-700">{activity.productName}</span>
-                  </span>
-                  <span className="text-gray-400 text-xs">{formatTimeAgo(activity.createdAt)}</span>
                 </button>
               ))}
             </div>

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getCorsHeaders } from "@/lib/cors";
+import { logApiCall } from "@/lib/apiLogger";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -7,76 +9,77 @@ const supabase = createClient(
 );
 
 // Handle CORS preflight
-export async function OPTIONS() {
+export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, {
     status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    },
+    headers: getCorsHeaders(request),
   });
 }
 
 export async function POST(request: NextRequest) {
+  const corsHeaders = getCorsHeaders(request);
+  const startTime = Date.now();
   try {
     const { query } = await request.json();
 
-    if (!query) {
+    if (!query || typeof query !== "string") {
       return NextResponse.json(
         { error: "Missing query parameter" },
-        {
-          status: 400,
-          headers: {
-            "Access-Control-Allow-Origin": "*",
-          },
-        }
+        { status: 400, headers: corsHeaders }
       );
     }
 
-    // Search products with fuzzy matching using pg_trgm or simple ILIKE
-    const { data: products, error } = await supabase
-      .from("products")
-      .select("id, name")
-      .ilike("name", `%${query}%`)
-      .limit(5);
+    const trimmedQuery = query.trim();
+    if (trimmedQuery.length === 0 || trimmedQuery.length > 200) {
+      return NextResponse.json(
+        { error: "Query must be between 1 and 200 characters" },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    // Use PostgreSQL trigram fuzzy search for better matching
+    // This handles typos, word order, abbreviations, etc.
+    const { data: products, error } = await supabase.rpc(
+      "search_products_fuzzy",
+      {
+        search_query: query,
+      }
+    );
 
     if (error) {
       console.error("Product search error:", error);
+      logApiCall("search-product", 500, Date.now() - startTime, null, "Failed to search products");
       return NextResponse.json(
         { error: "Failed to search products" },
         {
           status: 500,
-          headers: {
-            "Access-Control-Allow-Origin": "*",
-          },
+          headers: corsHeaders,
         }
       );
     }
 
+    logApiCall("search-product", 200, Date.now() - startTime);
     return NextResponse.json(
       {
         success: true,
         products: products || [],
       },
       {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: corsHeaders,
       }
     );
   } catch (error) {
     console.error("Search product error:", error);
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    logApiCall("search-product", 500, Date.now() - startTime, null, errorMsg);
     return NextResponse.json(
       {
         error: "Failed to search products",
-        details: error instanceof Error ? error.message : "Unknown error",
+        details: errorMsg,
       },
       {
         status: 500,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: corsHeaders,
       }
     );
   }

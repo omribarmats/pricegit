@@ -9,6 +9,7 @@ interface UserProfile {
   email: string;
   country: string | null;
   city: string | null;
+  role?: "user" | "moderator" | "admin";
 }
 
 interface AuthContextType {
@@ -18,11 +19,11 @@ interface AuthContextType {
   loading: boolean; // Only for initial auth check, not profile
   signUp: (
     email: string,
-    password: string
+    password: string,
   ) => Promise<{ error: AuthError | null }>;
   signIn: (
     email: string,
-    password: string
+    password: string,
   ) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: AuthError | null }>;
@@ -35,14 +36,48 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 // Helper function to generate random username
 function generateRandomUsername(): string {
   const adjectives = [
-    "swift", "calm", "bold", "wise", "kind", "brave", "quiet", "happy",
-    "cool", "warm", "bright", "dark", "light", "quick", "slow", "wild",
-    "tame", "fierce", "gentle", "noble",
+    "swift",
+    "calm",
+    "bold",
+    "wise",
+    "kind",
+    "brave",
+    "quiet",
+    "happy",
+    "cool",
+    "warm",
+    "bright",
+    "dark",
+    "light",
+    "quick",
+    "slow",
+    "wild",
+    "tame",
+    "fierce",
+    "gentle",
+    "noble",
   ];
   const nouns = [
-    "eagle", "raven", "wolf", "bear", "lion", "tiger", "fox", "owl",
-    "hawk", "deer", "panda", "koala", "otter", "seal", "whale", "dragon",
-    "phoenix", "griffin", "unicorn", "pegasus",
+    "eagle",
+    "raven",
+    "wolf",
+    "bear",
+    "lion",
+    "tiger",
+    "fox",
+    "owl",
+    "hawk",
+    "deer",
+    "panda",
+    "koala",
+    "otter",
+    "seal",
+    "whale",
+    "dragon",
+    "phoenix",
+    "griffin",
+    "unicorn",
+    "pegasus",
   ];
   const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
   const noun = nouns[Math.floor(Math.random() * nouns.length)];
@@ -56,22 +91,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   // Fetch user profile - non-blocking, fire and forget errors
-  const fetchUserProfile = async (userId: string): Promise<UserProfile | null> => {
+  const fetchUserProfile = async (
+    userId: string,
+  ): Promise<UserProfile | null> => {
     try {
       const { data, error } = await supabase
         .from("users")
-        .select("username, email, country, city")
+        .select("username, email, country, city, role")
         .eq("id", userId)
         .single();
 
       if (error) {
-        console.error("Error fetching user profile:", error);
         return null;
       }
 
       return data as UserProfile;
-    } catch (err) {
-      console.error("Error in fetchUserProfile:", err);
+    } catch {
       return null;
     }
   };
@@ -88,8 +123,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (!existingProfile) {
         // Get username from metadata or generate new one
-        const { data: { user } } = await supabase.auth.getUser();
-        const username = user?.user_metadata?.username || generateRandomUsername();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        const username =
+          user?.user_metadata?.username || generateRandomUsername();
 
         // Create profile
         const { error: insertError } = await supabase
@@ -97,11 +135,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .insert({ id: userId, email, username });
 
         if (insertError && insertError.code !== "23505") {
-          console.error("Error creating profile:", insertError);
+          // Profile creation failed (non-duplicate error) — will retry on next auth event
         }
       }
-    } catch (err) {
-      console.error("Error ensuring user profile:", err);
+    } catch {
+      // Non-critical — profile will be created on next auth event
     }
   };
 
@@ -124,50 +162,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let mounted = true;
 
     // Get initial session - this is fast
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!mounted) return;
-
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false); // Auth check done - set loading false IMMEDIATELY
-
-      // Fetch profile in background - don't block
-      if (session?.user) {
-        // Fire and forget - don't await
-        ensureUserProfile(session.user.id, session.user.email!).then(() => {
-          if (!mounted) return;
-          fetchUserProfile(session.user.id).then((profile) => {
-            if (mounted) setUserProfile(profile);
-          });
-        });
-      }
-    }).catch((error) => {
-      console.error("Error getting initial session:", error);
-      if (mounted) setLoading(false);
-    });
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
         if (!mounted) return;
 
-        // Update session and user immediately - don't wait for profile
         setSession(session);
         setUser(session?.user ?? null);
+        setLoading(false); // Auth check done - set loading false IMMEDIATELY
 
+        // Fetch profile in background - don't block
         if (session?.user) {
-          // Fetch profile in background - don't block auth state
+          // Fire and forget - don't await
           ensureUserProfile(session.user.id, session.user.email!).then(() => {
             if (!mounted) return;
             fetchUserProfile(session.user.id).then((profile) => {
               if (mounted) setUserProfile(profile);
             });
           });
-        } else {
-          setUserProfile(null);
         }
+      })
+      .catch((error) => {
+        console.error("Error getting initial session:", error);
+        if (mounted) setLoading(false);
+      });
+
+    // Listen for auth changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+
+      // Update session and user immediately - don't wait for profile
+      setSession(session);
+      setUser(session?.user ?? null);
+
+      if (session?.user) {
+        // Fetch profile in background - don't block auth state
+        ensureUserProfile(session.user.id, session.user.email!).then(() => {
+          if (!mounted) return;
+          fetchUserProfile(session.user.id).then((profile) => {
+            if (mounted) setUserProfile(profile);
+          });
+        });
+      } else {
+        setUserProfile(null);
       }
-    );
+    });
 
     return () => {
       mounted = false;
@@ -188,10 +229,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     // Check if user already exists
-    if (data?.user && data.user.identities && data.user.identities.length === 0) {
+    if (
+      data?.user &&
+      data.user.identities &&
+      data.user.identities.length === 0
+    ) {
       return {
         error: {
-          message: "An account with this email already exists. Please sign in instead.",
+          message:
+            "An account with this email already exists. Please sign in instead.",
         } as AuthError,
       };
     }
@@ -200,13 +246,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
     return { error };
   };
 
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
+
+    // Clear extension auth from localStorage
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("priceGitExtensionAuth");
+    }
   };
 
   const resetPassword = async (email: string) => {

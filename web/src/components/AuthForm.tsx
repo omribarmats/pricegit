@@ -20,8 +20,18 @@ export default function AuthForm({ mode }: AuthFormProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
   const [resendingVerification, setResendingVerification] = useState(false);
+  const [isExtensionSource, setIsExtensionSource] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   const { signIn, signUp, resetPassword } = useAuth();
+
+  // Check if opened from extension
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      setIsExtensionSource(params.get("source") === "extension");
+    }
+  }, []);
 
   // Check for pending verification on mount
   useEffect(() => {
@@ -78,8 +88,8 @@ export default function AuthForm({ mode }: AuthFormProps) {
           // Email exists
           setEmailExists(true);
         }
-      } catch (err) {
-        console.error("Error checking email:", err);
+      } catch {
+        // Email check failed — allow form submission anyway
       } finally {
         setEmailChecking(false);
       }
@@ -114,7 +124,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
 
     // If neither condition is met, show error
     setPasswordError(
-      "Password should be at least 15 characters OR at least 8 characters including a number and a lowercase letter."
+      "Password should be at least 15 characters OR at least 8 characters including a number and a lowercase letter.",
     );
   };
 
@@ -127,10 +137,14 @@ export default function AuthForm({ mode }: AuthFormProps) {
   };
 
   const handleGoogleSignIn = async () => {
+    const redirectUrl = isExtensionSource
+      ? `${window.location.origin}/auth/callback?source=extension`
+      : `${window.location.origin}/`;
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/`,
+        redirectTo: redirectUrl,
       },
     });
     if (error) setError(error.message);
@@ -153,6 +167,76 @@ export default function AuthForm({ mode }: AuthFormProps) {
     setResendingVerification(false);
   };
 
+  // Send auth token to extension
+  const sendAuthToExtension = async (userEmail: string) => {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        setMessage("Login successful! Please close this tab.");
+        return;
+      }
+
+      // Fetch username from users table
+      const { data: userData } = await supabase
+        .from("users")
+        .select("username")
+        .eq("id", session.user.id)
+        .single();
+
+      const username = userData?.username || userEmail.split("@")[0];
+
+      // Store in localStorage as fallback (extension can read this)
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(
+          "priceGitExtensionAuth",
+          JSON.stringify({
+            authToken: session.access_token,
+            refreshToken: session.refresh_token,
+            username: username,
+            timestamp: Date.now(),
+          }),
+        );
+      }
+
+      // Try to send via chrome.runtime if available
+      if (typeof chrome !== "undefined" && chrome.runtime) {
+        const extensionId = process.env.NEXT_PUBLIC_EXTENSION_ID;
+
+        if (extensionId && extensionId !== "your-extension-id") {
+          // Try to send message to extension (might fail if page doesn't have access)
+          try {
+            chrome.runtime.sendMessage(
+              extensionId,
+              {
+                action: "setAuth",
+                authToken: session.access_token,
+                refreshToken: session.refresh_token,
+                username: username,
+              },
+              () => {
+                // Extension messaging may not be available from web page — expected
+              },
+            );
+          } catch {
+            // Extension messaging not available from web page — expected
+          }
+        }
+      }
+
+      // Always show success message (content script will handle auth sync via localStorage)
+      setMessage(
+        "✅ Signed in! You can now close this tab and return to the extension.",
+      );
+    } catch {
+      setMessage(
+        "Logged in! You can now close this tab and return to the extension.",
+      );
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -169,7 +253,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
           // Store email for pending verification reminder
           localStorage.setItem("pendingVerification", email);
           setMessage(
-            "Check your email to confirm your account! You'll be able to customize your profile after verification."
+            "Check your email to confirm your account! You'll be able to customize your profile after verification.",
           );
         }
       } else {
@@ -178,7 +262,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
           // Check if it's an email not confirmed error
           if (error.message.toLowerCase().includes("email not confirmed")) {
             setError(
-              "Please verify your email before signing in. Check your inbox for the verification link."
+              "Please verify your email before signing in. Check your inbox for the verification link.",
             );
             // Store email for resend option
             localStorage.setItem("pendingVerification", email);
@@ -189,9 +273,15 @@ export default function AuthForm({ mode }: AuthFormProps) {
         } else {
           // Clear pending verification on successful login
           localStorage.removeItem("pendingVerification");
-          // Redirect immediately - don't wait for auth state to update
-          window.location.href = "/";
-          return; // Don't set loading to false, page will reload
+
+          // If opened from extension, send auth token
+          if (isExtensionSource) {
+            await sendAuthToExtension(email);
+          } else {
+            // Redirect immediately - don't wait for auth state to update
+            window.location.href = "/";
+          }
+          return; // Don't set loading to false, page will reload or close
         }
       }
     } catch (err) {
@@ -213,7 +303,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
           </h2>
         </div>
 
-        {mode === "signup" && (
+        {(mode === "signup" || mode === "login") && (
           <>
             <button
               type="button"
@@ -317,10 +407,10 @@ export default function AuthForm({ mode }: AuthFormProps) {
                 mode === "signup" && emailExists
                   ? "border-red-300"
                   : mode === "signup" &&
-                    emailExists === false &&
-                    email.includes("@")
-                  ? "border-green-300"
-                  : "border-gray-300"
+                      emailExists === false &&
+                      email.includes("@")
+                    ? "border-green-300"
+                    : "border-gray-300"
               } rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm`}
               placeholder="Email"
             />
@@ -433,8 +523,8 @@ export default function AuthForm({ mode }: AuthFormProps) {
                 passwordError
                   ? "border-red-300"
                   : !passwordError && password.length > 0
-                  ? "border-green-300"
-                  : "border-gray-300"
+                    ? "border-green-300"
+                    : "border-gray-300"
               } rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm`}
               placeholder="Password"
             />
@@ -511,31 +601,39 @@ export default function AuthForm({ mode }: AuthFormProps) {
           )}
         </div>
 
+        {mode === "signup" && (
+          <div className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              id="terms"
+              checked={agreedToTerms}
+              onChange={(e) => setAgreedToTerms(e.target.checked)}
+              className="mt-0.5 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <label htmlFor="terms" className="text-xs text-gray-600 leading-relaxed">
+              I agree to the{" "}
+              <a href="/terms" target="_blank" className="text-blue-600 hover:underline">
+                Terms of Service
+              </a>{" "}
+              and{" "}
+              <a href="/privacy" target="_blank" className="text-blue-600 hover:underline">
+                Privacy Policy
+              </a>
+            </label>
+          </div>
+        )}
+
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || (mode === "signup" && !agreedToTerms)}
           className="w-full bg-green-600 text-white py-2.5 px-4 rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium text-sm"
         >
           {loading
             ? "Loading..."
             : mode === "login"
-            ? "Sign in"
-            : "Create account"}
+              ? "Sign in"
+              : "Create account"}
         </button>
-
-        {mode === "signup" && (
-          <p className="text-xs text-gray-600 text-center leading-relaxed">
-            By creating an account, you agree to the{" "}
-            <a href="/terms" className="text-blue-600 hover:underline">
-              Terms of Service
-            </a>
-            . For more information about PriceGit's privacy practices, see the{" "}
-            <a href="/privacy" className="text-blue-600 hover:underline">
-              Privacy Statement
-            </a>
-            . We'll occasionally send you account-related emails.
-          </p>
-        )}
 
         <div className="text-center text-sm border-t border-gray-200 pt-5">
           {mode === "login" ? (

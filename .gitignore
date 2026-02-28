@@ -13,6 +13,7 @@ dist/
 out/
 build/
 coverage/
+*.tsbuildinfo
 
 # Env and editor
 .env

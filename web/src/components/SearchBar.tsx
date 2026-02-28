@@ -178,7 +178,7 @@ export function SearchBar({
             ? `${userLocation.city}, ${userLocation.country}`
             : "Loading..."}
         </span>
-        <span>including taxes and shipping.</span>
+     
         <button
           onClick={onEditLocation}
           className="text-blue-600 hover:underline cursor-pointer"

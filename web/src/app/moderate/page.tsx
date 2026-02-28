@@ -8,6 +8,9 @@ import { useRouter } from "next/navigation";
 interface PendingPrice {
   id: string;
   price: number;
+  base_price: number | null;
+  shipping_cost: number | null;
+  fees: number | null;
   currency: string;
   source_url: string;
   created_at: string;
@@ -21,7 +24,6 @@ interface PendingPrice {
   products: {
     id: string;
     name: string;
-    image_url: string | null;
   };
   stores: {
     id: string;
@@ -42,11 +44,23 @@ export default function ModeratePage() {
   const [rejectionReason, setRejectionReason] = useState("");
   const [showRejectModal, setShowRejectModal] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<{ id: string } | null>(null);
+  const [userRole, setUserRole] = useState<
+    "user" | "moderator" | "admin" | null
+  >(null);
+  const [reviewChecks, setReviewChecks] = useState<
+    Record<
+      string,
+      {
+        linkWorks?: boolean;
+        priceReasonable?: boolean;
+        locationValid?: boolean;
+      }
+    >
+  >({});
   const router = useRouter();
 
   useEffect(() => {
     checkAuth();
-    fetchPendingPrices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -61,6 +75,28 @@ export default function ModeratePage() {
     }
 
     setCurrentUser(user);
+
+    const { data: roleData, error: roleError } = await supabase
+      .from("users")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+
+    if (roleError) {
+      console.error("Failed to load user role:", roleError);
+      setError("Unable to verify permissions");
+      return;
+    }
+
+    const role = (roleData?.role as "user" | "moderator" | "admin") || "user";
+    setUserRole(role);
+
+    if (role !== "moderator" && role !== "admin") {
+      router.push("/");
+      return;
+    }
+
+    fetchPendingPrices();
   }
 
   async function fetchPendingPrices() {
@@ -71,6 +107,9 @@ export default function ModeratePage() {
           `
           id,
           price,
+          base_price,
+          shipping_cost,
+          fees,
           currency,
           source_url,
           created_at,
@@ -84,8 +123,7 @@ export default function ModeratePage() {
           submitted_by,
           products (
             id,
-            name,
-            image_url
+            name
           ),
           stores (
             id,
@@ -96,7 +134,7 @@ export default function ModeratePage() {
           submitted_by_user:users!submitted_by (
             username
           )
-        `
+        `,
         )
         .eq("status", "pending")
         .order("created_at", { ascending: false });
@@ -169,8 +207,9 @@ export default function ModeratePage() {
     }
   }
 
-  async function handleReject(priceId: string) {
-    if (!rejectionReason.trim()) {
+  async function handleReject(priceId: string, reason?: string) {
+    const finalReason = reason || rejectionReason.trim();
+    if (!finalReason) {
       alert("Please provide a reason for rejection");
       return;
     }
@@ -196,7 +235,7 @@ export default function ModeratePage() {
         body: JSON.stringify({
           priceId,
           action: "reject",
-          rejectionReason: rejectionReason.trim(),
+          rejectionReason: finalReason,
         }),
       });
 
@@ -230,6 +269,20 @@ export default function ModeratePage() {
     if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
     return `${Math.floor(seconds / 86400)}d ago`;
   }
+
+  const updateReviewCheck = (
+    priceId: string,
+    field: "linkWorks" | "priceReasonable" | "locationValid",
+    value: boolean,
+  ) => {
+    setReviewChecks((prev) => ({
+      ...prev,
+      [priceId]: {
+        ...prev[priceId],
+        [field]: value,
+      },
+    }));
+  };
 
   if (loading) {
     return (
@@ -273,135 +326,303 @@ export default function ModeratePage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {pendingPrices.map((price) => (
-              <div key={price.id} className="bg-white rounded-lg shadow p-6">
-                <div className="flex gap-6">
-                  {/* Product Image */}
-                  {price.products.image_url && (
-                    <div className="flex-shrink-0">
-                      <img
-                        src={price.products.image_url}
-                        alt={price.products.name}
-                        className="w-24 h-24 object-cover rounded"
-                      />
+            {pendingPrices.map((price) => {
+              const checks = reviewChecks[price.id] || {};
+              const isReady =
+                checks.linkWorks !== undefined &&
+                checks.priceReasonable !== undefined &&
+                checks.locationValid !== undefined;
+              const shouldReject =
+                checks.linkWorks === false ||
+                checks.priceReasonable === false ||
+                checks.locationValid === false;
+              const canSubmit = isReady;
+
+              return (
+                <div key={price.id} className="bg-white rounded-lg shadow p-6">
+                  <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
+                    <div className="flex gap-6">
+                      {/* Price Details */}
+                      <div className="flex-1">
+                        <Link
+                          href={`/product/${price.products.id}/${price.products.name
+                            .toLowerCase()
+                            .replace(/\s+/g, "-")}`}
+                          className="text-xl font-semibold hover:text-blue-600"
+                        >
+                          {price.products.name}
+                        </Link>
+
+                        <div className="mt-2 grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <span className="text-gray-600">Price:</span>{" "}
+                            <span className="font-semibold text-lg inline-flex items-center gap-2">
+                              <span
+                                className={`h-2.5 w-2.5 rounded-full ${price.is_final_price ? "bg-emerald-500" : "bg-amber-400"} ring-1 ring-gray-300`}
+                                role="img"
+                                aria-label={
+                                  price.is_final_price
+                                    ? "Final price"
+                                    : "Partial price"
+                                }
+                                title={
+                                  price.is_final_price
+                                    ? "Final price"
+                                    : "Partial price"
+                                }
+                              />
+                              {price.currency} {price.price.toFixed(2)}
+                            </span>
+                            <div className="mt-2 text-xs text-gray-600 space-y-1">
+                              <div className="flex justify-between max-w-[220px]">
+                                <span>Item price</span>
+                                <span>
+                                  {price.base_price != null
+                                    ? `${price.currency}${price.base_price.toFixed(2)}`
+                                    : "?"}
+                                </span>
+                              </div>
+                              <div className="flex justify-between max-w-[220px]">
+                                <span>Shipping</span>
+                                <span>
+                                  {price.shipping_cost != null
+                                    ? `${price.currency}${price.shipping_cost.toFixed(2)}`
+                                    : "?"}
+                                </span>
+                              </div>
+                              <div className="flex justify-between max-w-[220px]">
+                                <span>Fees</span>
+                                <span>
+                                  {price.fees != null
+                                    ? `${price.currency}${price.fees.toFixed(2)}`
+                                    : "?"}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Store:</span>{" "}
+                            <span className="font-medium">
+                              {price.stores.name}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Location:</span>{" "}
+                            {price.captured_by_city
+                              ? `${price.captured_by_city}, ${price.captured_by_country}`
+                              : price.captured_by_country}
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Condition:</span>{" "}
+                            <span className="capitalize">
+                              {price.condition}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Type:</span>{" "}
+                            <span className="capitalize">
+                              {price.fulfillment_type}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Submitted by:</span>{" "}
+                            {price.submitted_by_user ? (
+                              <Link
+                                href={`/user/${price.submitted_by_user.username}`}
+                                className="text-blue-600 hover:underline"
+                              >
+                                {price.submitted_by_user.username}
+                              </Link>
+                            ) : (
+                              "Unknown"
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mt-2 text-sm text-gray-500">
+                          Submitted {formatTimeAgo(price.created_at)}
+                          {price.source_url && (
+                            <>
+                              {" • "}
+                              <a
+                                href={price.source_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:underline"
+                              >
+                                View source
+                              </a>
+                            </>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  )}
 
-                  {/* Price Details */}
-                  <div className="flex-1">
-                    <Link
-                      href={`/product/${price.products.id}/${price.products.name
-                        .toLowerCase()
-                        .replace(/\s+/g, "-")}`}
-                      className="text-xl font-semibold hover:text-blue-600"
-                    >
-                      {price.products.name}
-                    </Link>
-
-                    <div className="mt-2 grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <span className="text-gray-600">Price:</span>{" "}
-                        <span className="font-semibold text-lg">
-                          {price.currency} {price.price.toFixed(2)}
-                        </span>
-                        {price.is_final_price && (
-                          <span className="ml-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
-                            Final Price
-                          </span>
-                        )}
+                    {/* Review Panel */}
+                    <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                      <div className="text-xs text-gray-500 mb-1">
+                        Link to price provided by user:
                       </div>
-                      <div>
-                        <span className="text-gray-600">Store:</span>{" "}
-                        <span className="font-medium">{price.stores.name}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-600">Location:</span>{" "}
-                        {price.captured_by_city
-                          ? `${price.captured_by_city}, ${price.captured_by_country}`
-                          : price.captured_by_country}
-                      </div>
-                      <div>
-                        <span className="text-gray-600">Condition:</span>{" "}
-                        <span className="capitalize">{price.condition}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-600">Type:</span>{" "}
-                        <span className="capitalize">
-                          {price.fulfillment_type}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-gray-600">Submitted by:</span>{" "}
-                        {price.submitted_by_user ? (
-                          <Link
-                            href={`/user/${price.submitted_by_user.username}`}
-                            className="text-blue-600 hover:underline"
-                          >
-                            {price.submitted_by_user.username}
-                          </Link>
-                        ) : (
-                          "Unknown"
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="mt-2 text-sm text-gray-500">
-                      Submitted {formatTimeAgo(price.created_at)}
-                      {price.source_url && (
-                        <>
-                          {" • "}
-                          <a
-                            href={price.source_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:underline"
-                          >
-                            View source
-                          </a>
-                        </>
-                      )}
-                    </div>
-
-                    {/* Screenshot for verification */}
-                    {price.screenshot_url && (
-                      <div className="mt-4">
-                        <span className="text-sm text-gray-600 font-medium">Screenshot proof:</span>
+                      {price.source_url ? (
                         <a
-                          href={price.screenshot_url}
+                          href={price.source_url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="block mt-2"
+                          className="text-sm text-blue-600 hover:underline"
+                          title={price.source_url}
                         >
-                          <img
-                            src={price.screenshot_url}
-                            alt="Price screenshot"
-                            className="max-w-md max-h-64 object-contain rounded border border-gray-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-                          />
+                          {price.source_url.length > 60
+                            ? `${price.source_url.slice(0, 60)}...`
+                            : price.source_url}
                         </a>
-                      </div>
-                    )}
-                  </div>
+                      ) : (
+                        <div className="text-sm text-gray-400">No link</div>
+                      )}
 
-                  {/* Actions */}
-                  <div className="flex-shrink-0 flex flex-col gap-2">
-                    <button
-                      onClick={() => handleApprove(price.id)}
-                      disabled={reviewingId === price.id}
-                      className="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {reviewingId === price.id ? "Processing..." : "Approve"}
-                    </button>
-                    <button
-                      onClick={() => setShowRejectModal(price.id)}
-                      disabled={reviewingId === price.id}
-                      className="px-6 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Reject
-                    </button>
+                      <div className="mt-4 text-sm">
+                        <div className="text-gray-700 mb-2">
+                          Does the link work and show the correct product?
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <label className="inline-flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name={`link-${price.id}`}
+                              checked={checks.linkWorks === true}
+                              onChange={() =>
+                                updateReviewCheck(price.id, "linkWorks", true)
+                              }
+                            />
+                            Yes
+                          </label>
+                          <label className="inline-flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name={`link-${price.id}`}
+                              checked={checks.linkWorks === false}
+                              onChange={() =>
+                                updateReviewCheck(price.id, "linkWorks", false)
+                              }
+                            />
+                            No
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 text-sm">
+                        <div className="text-gray-700 mb-2">
+                          Does the price seem reasonable and match what&apos;s
+                          shown on the page?
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <label className="inline-flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name={`price-${price.id}`}
+                              checked={checks.priceReasonable === true}
+                              onChange={() =>
+                                updateReviewCheck(
+                                  price.id,
+                                  "priceReasonable",
+                                  true,
+                                )
+                              }
+                            />
+                            Yes
+                          </label>
+                          <label className="inline-flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name={`price-${price.id}`}
+                              checked={checks.priceReasonable === false}
+                              onChange={() =>
+                                updateReviewCheck(
+                                  price.id,
+                                  "priceReasonable",
+                                  false,
+                                )
+                              }
+                            />
+                            No
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 text-sm">
+                        <div className="text-gray-700 mb-2">
+                          Does the location make sense for this store?
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <label className="inline-flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name={`location-${price.id}`}
+                              checked={checks.locationValid === true}
+                              onChange={() =>
+                                updateReviewCheck(
+                                  price.id,
+                                  "locationValid",
+                                  true,
+                                )
+                              }
+                            />
+                            Yes
+                          </label>
+                          <label className="inline-flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name={`location-${price.id}`}
+                              checked={checks.locationValid === false}
+                              onChange={() =>
+                                updateReviewCheck(
+                                  price.id,
+                                  "locationValid",
+                                  false,
+                                )
+                              }
+                            />
+                            No
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="mt-6 flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => {
+                            if (!canSubmit) return;
+                            if (shouldReject) {
+                              const reasons: string[] = [];
+                              if (checks.linkWorks === false) {
+                                reasons.push(
+                                  "Link broken or incorrect product",
+                                );
+                              }
+                              if (checks.priceReasonable === false) {
+                                reasons.push(
+                                  "Price appears incorrect or unreasonable",
+                                );
+                              }
+                              if (checks.locationValid === false) {
+                                reasons.push("Invalid location for this store");
+                              }
+                              handleReject(price.id, reasons.join("; "));
+                            } else {
+                              handleApprove(price.id);
+                            }
+                          }}
+                          disabled={reviewingId === price.id || !canSubmit}
+                          className="px-5 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {reviewingId === price.id
+                            ? "Processing..."
+                            : "Submit"}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

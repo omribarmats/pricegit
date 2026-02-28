@@ -3,11 +3,18 @@
 import Link from "next/link";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { Product } from "@/types";
+import { Product, UserLocation } from "@/types";
 import { slugify } from "@/lib/slugify";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePathname } from "next/navigation";
+import { HowItWorksModal } from "./HowItWorksModal";
+import { LocationModal } from "./LocationModal";
+import {
+  getUserLocationFromIP,
+  getStoredLocation,
+  setStoredLocation,
+} from "@/lib/location";
 
 export function Header() {
   const pathname = usePathname();
@@ -16,19 +23,48 @@ export function Header() {
   const [suggestions, setSuggestions] = useState<Product[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [howItWorksOpen, setHowItWorksOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
+  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const router = useRouter();
   const searchRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const { user, userProfile, signOut, loading } = useAuth();
+  const isModerator =
+    userProfile?.role === "moderator" || userProfile?.role === "admin";
 
   // Username comes from userProfile in AuthContext - no need to fetch
   const username = userProfile?.username || null;
 
+  // Initialize location
+  useEffect(() => {
+    const initializeLocation = async () => {
+      const stored = getStoredLocation();
+      if (stored) {
+        setUserLocation(stored);
+        return;
+      }
+
+      const ipLocation = await getUserLocationFromIP();
+      if (ipLocation) {
+        setUserLocation(ipLocation);
+        setStoredLocation(ipLocation);
+      }
+    };
+
+    initializeLocation();
+  }, []);
+
+  const handleLocationSave = (location: UserLocation) => {
+    setUserLocation(location);
+    setStoredLocation(location);
+  };
+
   // Fetch pending prices count for review
   useEffect(() => {
     async function fetchPendingCount() {
-      if (!user) {
+      if (!user || !isModerator) {
         setPendingCount(0);
         return;
       }
@@ -48,7 +84,7 @@ export function Header() {
     // Refresh every 30 seconds
     const interval = setInterval(fetchPendingCount, 30000);
     return () => clearInterval(interval);
-  }, [user]);
+  }, [user, isModerator]);
 
   useEffect(() => {
     const searchProducts = async () => {
@@ -60,7 +96,7 @@ export function Header() {
 
       const { data, error } = await supabase
         .from("products")
-        .select("id, name, image_url")
+        .select("id, name")
         .ilike("name", `%${query}%`)
         .limit(5);
 
@@ -113,70 +149,57 @@ export function Header() {
         isProductPage ? "" : "border-b border-gray-200"
       }`}
     >
-      <div className="max-w-6xl mx-auto px-6 py-4">
-        <div className="flex items-center gap-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4 pb-6 sm:pb-8">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4 md:gap-8">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 flex-shrink-0">
-            <span className="text-3xl">🪙</span>
-            <h1 className="text-2xl font-bold text-gray-900">PriceGit</h1>
+            <span className="text-2xl sm:text-3xl">🪙</span>
+            <span className="text-lg sm:text-2xl font-bold text-gray-900">
+              PriceGit
+            </span>
           </Link>
 
-          {/* Search Bar */}
-          <div ref={searchRef} className="flex-1 max-w-2xl relative">
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search for products"
-              className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+          {/* Auth UI - appears on mobile before search due to flex order */}
+          <div className="flex items-center gap-2 sm:gap-4 ml-auto sm:order-3">
+            {/* How it works button */}
+            <button
+              onClick={() => setHowItWorksOpen(true)}
+              className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors cursor-pointer"
+            >
+              <svg
+                className="w-4 h-4 sm:w-5 sm:h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <span className="hidden sm:inline">How it works</span>
+            </button>
 
-            {/* Suggestions Dropdown */}
-            {isOpen && suggestions.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-80 overflow-y-auto">
-                {suggestions.map((product) => (
-                  <button
-                    key={product.id}
-                    onClick={() => handleProductClick(product)}
-                    className="w-full px-4 py-3 text-left hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
-                  >
-                    <div className="font-medium text-gray-900">
-                      {product.name}
-                    </div>
-                    {product.hasAvailableStores && (
-                      <div className="text-sm text-green-600 mt-1">
-                        Available in your area
-                      </div>
-                    )}
-                    {!product.hasAvailableStores && (
-                      <div className="text-sm text-gray-500 mt-1">
-                        No local suppliers
-                      </div>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Auth UI */}
-          <div className="flex items-center gap-4 ml-auto">
             {loading ? (
               // Show placeholder while checking auth
-              <div className="w-20 h-9" />
+              <div className="w-12 sm:w-20 h-9" />
             ) : user ? (
               <div ref={userMenuRef} className="relative">
                 <button
                   onClick={() => setUserMenuOpen(!userMenuOpen)}
-                  className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors cursor-pointer"
+                  className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors cursor-pointer"
                 >
                   {username ? (
-                    <span>{username}</span>
+                    <span className="max-w-[80px] sm:max-w-none truncate">
+                      {username}
+                    </span>
                   ) : (
-                    <span className="w-20 h-4 bg-gray-200 rounded animate-pulse" />
+                    <span className="w-12 sm:w-20 h-4 bg-gray-200 rounded animate-pulse" />
                   )}
                   <svg
-                    className={`w-4 h-4 transition-transform ${
+                    className={`w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0 transition-transform ${
                       userMenuOpen ? "rotate-180" : ""
                     }`}
                     fill="none"
@@ -217,33 +240,35 @@ export function Header() {
                           My Profile
                         </Link>
                       )}
-                      <Link
-                        href="/moderate"
-                        className="flex items-center justify-between px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                        onClick={() => setUserMenuOpen(false)}
-                      >
-                        <div className="flex items-center gap-3">
-                          <svg
-                            className="w-4 h-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                            />
-                          </svg>
-                          Review Prices
-                        </div>
-                        {pendingCount > 0 && (
-                          <span className="inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold leading-none text-white bg-blue-600 rounded-full">
-                            {pendingCount}
-                          </span>
-                        )}
-                      </Link>
+                      {isModerator && (
+                        <Link
+                          href="/moderate"
+                          className="flex items-center justify-between px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                          onClick={() => setUserMenuOpen(false)}
+                        >
+                          <div className="flex items-center gap-3">
+                            <svg
+                              className="w-4 h-4"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                              />
+                            </svg>
+                            Review Prices
+                          </div>
+                          {pendingCount > 0 && (
+                            <span className="bg-blue-600 text-white text-xs font-semibold px-2 py-0.5 rounded-full">
+                              {pendingCount}
+                            </span>
+                          )}
+                        </Link>
+                      )}
                       <Link
                         href="/settings"
                         className="flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
@@ -274,10 +299,14 @@ export function Header() {
                         onClick={async (e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          console.log("Sign out clicked");
-                          // Sign out and redirect immediately - don't wait for auth state to fully update
-                          signOut(); // Fire and forget
-                          window.location.href = "/"; // Force full page reload to clear all state
+                          try {
+                            // Sign out and wait for it to complete
+                            await signOut();
+                          } catch {
+                            // Redirect below handles cleanup regardless
+                          }
+                          // Redirect regardless of success/failure to clear all state
+                          window.location.href = "/";
                         }}
                         className="flex items-center gap-3 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
                       >
@@ -301,24 +330,105 @@ export function Header() {
                 )}
               </div>
             ) : (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 sm:gap-2">
                 <Link
                   href="/login"
-                  className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
+                  className="px-2 sm:px-4 py-2 text-xs sm:text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
                 >
-                  Sign In
+                  <span className="hidden sm:inline">Sign In</span>
+                  <span className="sm:hidden">In</span>
                 </Link>
                 <Link
                   href="/signup"
-                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+                  className="px-2 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
                 >
-                  Sign Up
+                  <span className="hidden sm:inline">Sign Up</span>
+                  <span className="sm:hidden">Up</span>
                 </Link>
               </div>
             )}
           </div>
+
+          {/* Search Bar - full width on mobile (wraps to new row), flex-1 on larger screens */}
+          <div className="w-full sm:w-auto sm:flex-1 sm:max-w-2xl relative sm:order-2">
+            <div ref={searchRef} className="relative">
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search for products"
+                className="w-full px-3 sm:px-4 py-2 text-sm sm:text-base bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+
+              {/* Suggestions Dropdown */}
+              {isOpen && suggestions.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-80 overflow-y-auto">
+                  {suggestions.map((product) => (
+                    <button
+                      key={product.id}
+                      onClick={() => handleProductClick(product)}
+                      className="w-full px-4 py-3 text-left hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
+                    >
+                      <div className="font-medium text-gray-900">
+                        {product.name}
+                      </div>
+                      {product.hasAvailableStores && (
+                        <div className="text-sm text-green-600 mt-1">
+                          Available in your area
+                        </div>
+                      )}
+                      {!product.hasAvailableStores && (
+                        <div className="text-sm text-gray-500 mt-1">
+                          No local suppliers
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Current Location - positioned absolutely to not affect flex alignment */}
+            <div className="absolute top-full left-0 mt-1 text-xs text-gray-500 truncate max-w-full">
+              <span className="hidden sm:inline">Current location: </span>
+              {userLocation ? (
+                <>
+                  <span>
+                    {userLocation.city}, {userLocation.country}
+                  </span>
+                  <button
+                    onClick={() => setIsLocationModalOpen(true)}
+                    className="text-blue-600 hover:text-blue-700 ml-1 cursor-pointer"
+                  >
+                    Edit
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => setIsLocationModalOpen(true)}
+                  className="text-blue-600 hover:text-blue-700 cursor-pointer"
+                >
+                  Set location
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
+
+      {/* How It Works Modal */}
+      <HowItWorksModal
+        isOpen={howItWorksOpen}
+        onClose={() => setHowItWorksOpen(false)}
+      />
+
+      {/* Location Modal */}
+      <LocationModal
+        isOpen={isLocationModalOpen}
+        onClose={() => setIsLocationModalOpen(false)}
+        onSave={handleLocationSave}
+        currentLocation={userLocation}
+      />
     </header>
   );
 }

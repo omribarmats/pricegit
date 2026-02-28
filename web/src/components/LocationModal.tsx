@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect } from "react";
 import { UserLocation } from "@/types";
-// import { checkClientRateLimit } from "@/lib/rateLimit"; // TEMPORARILY DISABLED FOR TESTING
 
 interface LocationModalProps {
   isOpen: boolean;
@@ -48,29 +47,19 @@ export function LocationModal({
       return;
     }
 
-    // Check client-side rate limit first (TEMPORARILY DISABLED FOR TESTING)
-    // const clientRateLimit = checkClientRateLimit();
-    // if (!clientRateLimit.allowed) {
-    //   setErrorMessage(
-    //     clientRateLimit.message || "Too many requests. Please try again later."
-    //   );
-    //   setSuggestions([]);
-    //   return;
-    // }
-
     setIsLoading(true);
     setErrorMessage(null);
 
     try {
       // Call our proxy API instead of Mapbox directly
       const response = await fetch(
-        `/api/geocode?q=${encodeURIComponent(query)}`
+        `/api/geocode?q=${encodeURIComponent(query)}`,
       );
 
       if (response.status === 429) {
         const data = await response.json();
         setErrorMessage(
-          data.message || "Rate limit exceeded. Please try again later."
+          data.message || "Rate limit exceeded. Please try again later.",
         );
         setSuggestions([]);
         return;
@@ -85,7 +74,7 @@ export function LocationModal({
     } catch (error) {
       console.error("Error fetching address suggestions:", error);
       setErrorMessage(
-        "Failed to fetch location suggestions. Please try again."
+        "Failed to fetch location suggestions. Please try again.",
       );
       setSuggestions([]);
     } finally {
@@ -147,7 +136,7 @@ export function LocationModal({
             </h3>
             <button
               onClick={onClose}
-              className="text-gray-500 hover:text-gray-700 text-2xl leading-none"
+              className="text-gray-500 hover:text-gray-700 text-2xl leading-none cursor-pointer"
             >
               ×
             </button>
@@ -174,7 +163,7 @@ export function LocationModal({
                     <button
                       key={index}
                       onClick={() => handleSelectSuggestion(suggestion)}
-                      className="w-full px-3 py-2 text-left hover:bg-gray-100 border-b last:border-b-0"
+                      className="w-full px-3 py-2 text-left hover:bg-gray-100 border-b last:border-b-0 cursor-pointer"
                     >
                       <div className="text-sm text-gray-900">
                         {suggestion.place_name}
@@ -215,13 +204,13 @@ export function LocationModal({
               <button
                 onClick={handleSave}
                 disabled={!selectedLocation}
-                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors cursor-pointer"
               >
                 Save Location
               </button>
               <button
                 onClick={onClose}
-                className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors"
+                className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors cursor-pointer"
               >
                 Cancel
               </button>

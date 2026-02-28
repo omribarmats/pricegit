@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { Product, UserLocation } from "@/types";
 import { LocationModal } from "@/components/LocationModal";
+import PriceBreakdownTooltip from "@/components/PriceBreakdownTooltip";
+import PriceReviewModal from "@/components/PriceReviewModal";
 import { canStoreServeUser } from "@/lib/storeFilters";
 import {
   getUserLocationFromIP,
@@ -13,6 +15,10 @@ import { getCurrencySymbol } from "@/lib/currency";
 import { calculateDistance } from "@/lib/distance";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import {
+  checkExtensionInstalled,
+  openTabWithInstructionPopup,
+} from "@/lib/extension";
 import Link from "next/link";
 
 interface ProductDetailClientProps {
@@ -24,6 +30,9 @@ interface LatestPrice {
   id: string; // Add price history ID for unique keys
   source: string;
   price: number;
+  base_price?: number | null;
+  shipping_cost?: number | null;
+  fees?: number | null;
   source_url: string;
   created_at: string;
   store_id: string;
@@ -36,8 +45,15 @@ interface LatestPrice {
   is_final_price?: boolean;
   status?: "pending" | "approved" | "rejected";
   submitted_by?: string;
+  screenshot_url?: string | null;
   stores?: Product["price_history"][0]["stores"];
   submitted_by_username?: string;
+}
+
+interface PriceGroup {
+  key: string;
+  latest: LatestPrice;
+  history: LatestPrice[];
 }
 
 function formatTimeAgo(date: string): string {
@@ -71,58 +87,104 @@ function PriceDisplay({
   );
 }
 
-function getLatestPricePerStore(
-  priceHistory: Product["price_history"]
-): LatestPrice[] {
-  const storeMap = new Map<string, LatestPrice>();
+function mapHistoryToLatestPrice(
+  history: Product["price_history"][0],
+): LatestPrice {
+  const submittedByUser = history.submitted_by_user;
+  const username = Array.isArray(submittedByUser)
+    ? submittedByUser[0]?.username
+    : submittedByUser?.username;
+
+  return {
+    id: history.id,
+    source: history.source,
+    price: history.price,
+    base_price: history.base_price,
+    shipping_cost: history.shipping_cost,
+    fees: history.fees,
+    source_url: history.source_url || "",
+    created_at: history.created_at,
+    store_id: history.store_id,
+    captured_by_country: history.captured_by_country,
+    captured_by_city: history.captured_by_city ?? null,
+    fulfillment_type: history.fulfillment_type,
+    condition: history.condition,
+    product_type: history.product_type,
+    currency: history.currency,
+    is_final_price: history.is_final_price,
+    status: history.status,
+    submitted_by: history.submitted_by,
+    screenshot_url: history.screenshot_url,
+    stores: history.stores,
+    submitted_by_username: username,
+  };
+}
+
+function groupPricesByStoreLocation(
+  priceHistory: Product["price_history"],
+): PriceGroup[] {
+  const groupMap = new Map<string, LatestPrice[]>();
+  const aliasMap = new Map<string, string>();
 
   priceHistory.forEach((history) => {
-    // Create a composite key: store_id + city (or country if no city) + fulfillment + condition
-    // This ensures we get one price per unique combination
-    const locationKey = history.captured_by_city
-      ? `${history.store_id}:${history.captured_by_country}:${history.captured_by_city}:${history.fulfillment_type}:${history.condition}`
-      : `${history.store_id}:${history.captured_by_country}:${history.fulfillment_type}:${history.condition}`;
+    const storeName = Array.isArray(history.stores)
+      ? history.stores[0]?.name
+      : history.stores?.name;
+    const normalizedStoreName = storeName?.toLowerCase().trim();
+    const storeId = history.store_id || "";
+    const locationSuffix = history.captured_by_city
+      ? `${history.captured_by_country}:${history.captured_by_city}`
+      : `${history.captured_by_country}`;
 
-    const existing = storeMap.get(locationKey);
-    if (
-      !existing ||
-      new Date(history.created_at) > new Date(existing.created_at)
-    ) {
-      // Handle submitted_by_user which can be array or object from Supabase
-      const submittedByUser = history.submitted_by_user;
-      const username = Array.isArray(submittedByUser)
-        ? submittedByUser[0]?.username
-        : submittedByUser?.username;
+    const idKey = storeId ? `id:${storeId}:${locationSuffix}` : null;
+    const nameKey = normalizedStoreName
+      ? `name:${normalizedStoreName}:${locationSuffix}`
+      : history.source
+        ? `source:${history.source.toLowerCase().trim()}:${locationSuffix}`
+        : null;
 
-      storeMap.set(locationKey, {
-        id: history.id, // Add the price history ID for unique keys
-        source: history.source,
-        price: history.price,
-        source_url: history.source_url || "",
-        created_at: history.created_at,
-        store_id: history.store_id,
-        captured_by_country: history.captured_by_country,
-        captured_by_city: history.captured_by_city ?? null,
-        fulfillment_type: history.fulfillment_type,
-        condition: history.condition,
-        product_type: history.product_type,
-        currency: history.currency,
-        is_final_price: history.is_final_price,
-        status: history.status,
-        submitted_by: history.submitted_by,
-        stores: history.stores,
-        submitted_by_username: username,
-      });
+    const existingKey =
+      (idKey && aliasMap.get(idKey)) ||
+      (nameKey && aliasMap.get(nameKey)) ||
+      idKey ||
+      nameKey ||
+      `unknown:${locationSuffix}`;
+
+    if (idKey) aliasMap.set(idKey, existingKey);
+    if (nameKey) aliasMap.set(nameKey, existingKey);
+
+    const entry = mapHistoryToLatestPrice(history);
+    const group = groupMap.get(existingKey);
+    if (group) {
+      group.push(entry);
+    } else {
+      groupMap.set(existingKey, [entry]);
     }
   });
 
-  return Array.from(storeMap.values());
+  return Array.from(groupMap.entries()).map(([key, entries]) => {
+    const sorted = entries.sort(
+      (a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+    return {
+      key,
+      latest: sorted[0],
+      history: sorted.slice(1),
+    };
+  });
+}
+
+function getLatestPricePerStore(
+  priceHistory: Product["price_history"],
+): LatestPrice[] {
+  return groupPricesByStoreLocation(priceHistory).map((group) => group.latest);
 }
 
 function sortPricesByRelevance(
   prices: LatestPrice[],
   userCountry: string | null,
-  userCity: string | null
+  userCity: string | null,
 ): LatestPrice[] {
   return prices.sort((a, b) => {
     // Assign tier based on location, fulfillment, and condition
@@ -188,10 +250,19 @@ export function ProductDetailClient({
   const [activeTab, setActiveTab] = useState<"prices" | "pending">("prices");
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [showRejectModal, setShowRejectModal] = useState<string | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
   const [rejectionReason, setRejectionReason] = useState("");
   const [pendingPricesState, setPendingPricesState] = useState<
     typeof product.price_history
   >([]);
+  const [showReviewModal, setShowReviewModal] = useState<string | null>(null);
+  const [showNonModeratorModal, setShowNonModeratorModal] = useState(false);
+  const [extensionInstalled, setExtensionInstalled] = useState<boolean | null>(
+    null,
+  );
+  const [revalidatingId, setRevalidatingId] = useState<string | null>(null);
+  const [showExtensionInstallModal, setShowExtensionInstallModal] =
+    useState(false);
 
   // No filtering needed, use product directly
   const filteredProduct = product;
@@ -199,7 +270,7 @@ export function ProductDetailClient({
   // Filter states
   const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
   const [selectedFulfillments, setSelectedFulfillments] = useState<string[]>(
-    []
+    [],
   );
   const [locationDropdownOpen, setLocationDropdownOpen] = useState(false);
   const [fulfillmentDropdownOpen, setFulfillmentDropdownOpen] = useState(false);
@@ -207,14 +278,61 @@ export function ProductDetailClient({
   const locationDropdownRef = useRef<HTMLDivElement>(null);
   const fulfillmentDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Initialize pending prices from product prop
+  // Fetch pending prices client-side (server can't access user session)
   useEffect(() => {
-    const pending = (product.price_history || []).filter(
-      (price) =>
-        price.status === "pending" && price.submitted_by !== currentUserId
-    );
-    setPendingPricesState(pending);
-  }, [product.price_history, currentUserId]);
+    const fetchPendingPrices = async () => {
+      if (!user) {
+        setPendingPricesState([]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("price_history")
+        .select(
+          `
+          id,
+          price,
+          base_price,
+          shipping_cost,
+          fees,
+          source,
+          source_url,
+          created_at,
+          store_id,
+          captured_by_country,
+          captured_by_city,
+          fulfillment_type,
+          condition,
+          product_type,
+          currency,
+          is_final_price,
+          status,
+          submitted_by,
+          screenshot_url,
+          stores (
+            id,
+            name,
+            country,
+            city,
+            created_at
+          ),
+          submitted_by_user:users!submitted_by (username)
+        `,
+        )
+        .eq("product_id", product.id)
+        .eq("status", "pending");
+
+      if (error) {
+        console.error("Error fetching pending prices:", error);
+      }
+
+      if (!error && data) {
+        setPendingPricesState(data as typeof product.price_history);
+      }
+    };
+
+    fetchPendingPrices();
+  }, [product.id, user]);
 
   useEffect(() => {
     const initializeLocation = async () => {
@@ -237,6 +355,35 @@ export function ProductDetailClient({
 
     initializeLocation();
   }, []);
+
+  // Check if extension is installed
+  useEffect(() => {
+    checkExtensionInstalled().then(setExtensionInstalled);
+  }, []);
+
+  const handleRecapture = async (sourceUrl: string, priceId: string) => {
+    // Check if extension is installed
+    if (extensionInstalled === false) {
+      // Show install prompt
+      setShowExtensionInstallModal(true);
+      return;
+    }
+
+    // Request extension to open tab with instruction popup
+    const success = await openTabWithInstructionPopup(sourceUrl);
+
+    if (!success) {
+      console.error("Failed to communicate with extension");
+      alert(
+        "Failed to open tab. Please make sure the extension is installed and try again.",
+      );
+    }
+  };
+
+  const handleInstallExtension = () => {
+    window.open("https://chrome.google.com/webstore", "_blank");
+    setShowExtensionInstallModal(false);
+  };
 
   // Check if product is starred by current user
   useEffect(() => {
@@ -291,7 +438,7 @@ export function ProductDetailClient({
         alert(
           result.error +
             (result.details ? `\n${result.details}` : "") +
-            (result.code ? `\nCode: ${result.code}` : "")
+            (result.code ? `\nCode: ${result.code}` : ""),
         );
         return;
       }
@@ -307,8 +454,8 @@ export function ProductDetailClient({
     }
   };
 
-  const handleReject = async (priceId: string) => {
-    if (!rejectionReason.trim()) {
+  const handleReject = async (priceId: string, reason: string) => {
+    if (!reason.trim()) {
       alert("Please provide a reason for rejection");
       return;
     }
@@ -334,7 +481,7 @@ export function ProductDetailClient({
         body: JSON.stringify({
           priceId,
           action: "reject",
-          rejectionReason: rejectionReason.trim(),
+          rejectionReason: reason.trim(),
         }),
       });
 
@@ -345,15 +492,14 @@ export function ProductDetailClient({
         alert(
           result.error +
             (result.details ? `\n${result.details}` : "") +
-            (result.code ? `\nCode: ${result.code}` : "")
+            (result.code ? `\nCode: ${result.code}` : ""),
         );
         return;
       }
 
       // Remove from pending list
       setPendingPricesState((prev) => prev.filter((p) => p.id !== priceId));
-      setShowRejectModal(null);
-      setRejectionReason("");
+      setShowReviewModal(null);
       alert("Price rejected");
     } catch (err) {
       console.error("Error rejecting price:", err);
@@ -428,12 +574,13 @@ export function ProductDetailClient({
 
   // Separate approved and pending prices
   const approvedPrices = (filteredProduct.price_history || []).filter(
-    (price) => price.status === "approved"
+    (price) => price.status === "approved",
   );
   // Use state for pending prices so we can update after review
   const pendingPrices = pendingPricesState;
 
-  const latestPrices = getLatestPricePerStore(approvedPrices);
+  const allGroups = groupPricesByStoreLocation(approvedPrices);
+  const latestPrices = allGroups.map((group) => group.latest);
 
   // Get unique countries and cities from price history
   const locationsByCountry = (filteredProduct.price_history || []).reduce(
@@ -449,13 +596,13 @@ export function ProductDetailClient({
       }
       return acc;
     },
-    {} as Record<string, Set<string>>
+    {} as Record<string, Set<string>>,
   );
 
   const countries = Object.keys(locationsByCountry).sort();
 
   // Filter prices based on selected filters
-  const filteredPrices = latestPrices.filter((priceEntry) => {
+  const filteredApprovedPrices = approvedPrices.filter((priceEntry) => {
     // Location filter (country or city level)
     let locationMatch = selectedLocations.length === 0;
     if (!locationMatch) {
@@ -483,17 +630,29 @@ export function ProductDetailClient({
   const sortCity = userProfile?.city || userLocation?.city || null;
 
   // Sort prices by relevance to user
-  const sortedPrices = sortPricesByRelevance(
-    filteredPrices,
-    sortCountry,
-    sortCity
+  const filteredGroups = groupPricesByStoreLocation(filteredApprovedPrices);
+  const filteredGroupMap = new Map(
+    filteredGroups.map((group) => [group.latest.id, group]),
   );
+  const sortedGroups = sortPricesByRelevance(
+    filteredGroups.map((group) => group.latest),
+    sortCountry,
+    sortCity,
+  )
+    .map((latest) => filteredGroupMap.get(latest.id))
+    .filter(Boolean) as PriceGroup[];
+
+  const toggleGroupExpanded = (key: string) => {
+    setExpandedGroups((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+    );
+  };
 
   const toggleLocation = (location: string) => {
     setSelectedLocations((prev) =>
       prev.includes(location)
         ? prev.filter((l) => l !== location)
-        : [...prev, location]
+        : [...prev, location],
     );
   };
 
@@ -503,7 +662,7 @@ export function ProductDetailClient({
 
   const toggleFulfillment = (type: string) => {
     setSelectedFulfillments((prev) =>
-      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
+      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type],
     );
   };
 
@@ -543,7 +702,7 @@ export function ProductDetailClient({
                   : "border-b-2 border-transparent"
               }`}
             >
-              Prices ({latestPrices.length})
+              Prices ({allGroups.length})
             </button>
             <button
               onClick={() => setActiveTab("pending")}
@@ -568,9 +727,9 @@ export function ProductDetailClient({
               </h1>
               {activeTab === "prices" && (
                 <p className="text-sm text-gray-600 mt-2">
-                  Showing {latestPrices.length}{" "}
-                  {latestPrices.length === 1 ? "price" : "prices"} from around
-                  the world
+                  Showing {allGroups.length}{" "}
+                  {allGroups.length === 1 ? "price" : "prices"} from around the
+                  world
                 </p>
               )}
             </div>
@@ -687,7 +846,7 @@ export function ProductDetailClient({
                         // Check if any city matches
                         const cities = Array.from(locationsByCountry[country]);
                         return cities.some((city) =>
-                          city.toLowerCase().includes(query)
+                          city.toLowerCase().includes(query),
                         );
                       })
                       .map((country) => {
@@ -874,7 +1033,8 @@ export function ProductDetailClient({
             </div>
           </div>
 
-          {sortedPrices.length === 0 ? (
+          {(activeTab === "prices" && sortedGroups.length === 0) ||
+          (activeTab === "pending" && pendingPrices.length === 0) ? (
             <div className="text-gray-500 text-center py-8 border border-gray-200 rounded-lg">
               {activeTab === "prices"
                 ? "No prices available for your location"
@@ -887,34 +1047,30 @@ export function ProductDetailClient({
                 Prices committed by the community (
                 {selectedLocations.length === 0 &&
                 selectedFulfillments.length === 0
-                  ? sortedPrices.length
-                  : `${sortedPrices.length}/${latestPrices.length}`}
+                  ? sortedGroups.length
+                  : `${sortedGroups.length}/${allGroups.length}`}
                 )
               </div>
 
               {/* Price List */}
               <div className="divide-y divide-gray-200">
-                {sortedPrices.map((priceEntry) => {
-                  // Use the unique price history ID as the key
-                  const uniqueKey = priceEntry.id;
+                {sortedGroups.map((group) => {
+                  const priceEntry = group.latest;
+                  const olderEntries = group.history;
+                  const isExpanded = expandedGroups.includes(group.key);
+                  const olderCount = olderEntries.length;
 
                   // Get store name, handling array from Supabase
                   const storeName = Array.isArray(priceEntry.stores)
                     ? priceEntry.stores[0]?.name
                     : priceEntry.stores?.name;
 
-                  // Format fulfillment type
-                  const fulfillmentLabel =
-                    priceEntry.fulfillment_type === "delivery"
-                      ? "delivery"
-                      : priceEntry.fulfillment_type === "store"
-                      ? "store"
-                      : "person-used";
-
-                  // Format price type
-                  const priceTypeLabel = priceEntry.is_final_price
-                    ? "final price"
-                    : "non-final price";
+                  const priceStatusLabel = priceEntry.is_final_price
+                    ? "Final price"
+                    : "Partial price";
+                  const priceStatusClass = priceEntry.is_final_price
+                    ? "bg-emerald-500"
+                    : "bg-amber-400";
 
                   // Format location
                   const location = priceEntry.captured_by_city
@@ -922,68 +1078,270 @@ export function ProductDetailClient({
                     : priceEntry.captured_by_country;
 
                   return (
-                    <div
-                      key={uniqueKey}
-                      className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 px-4 py-3 bg-white hover:bg-gray-50"
-                    >
-                      {/* Left side: Price, Store, Fulfillment, Price Type */}
-                      <div className="text-sm text-gray-900">
-                        {priceEntry.source_url ? (
-                          <a
-                            href={priceEntry.source_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="hover:text-blue-600 hover:underline underline-offset-4"
-                          >
-                            <PriceDisplay
-                              price={priceEntry.price}
-                              currency={priceEntry.currency || "USD"}
-                            />
-                            {" / "}
-                            {storeName || priceEntry.source} /{" "}
-                            {fulfillmentLabel} / {priceTypeLabel}
-                          </a>
-                        ) : (
-                          <span>
-                            <PriceDisplay
-                              price={priceEntry.price}
-                              currency={priceEntry.currency || "USD"}
-                            />
-                            {" / "}
-                            {storeName || priceEntry.source} /{" "}
-                            {fulfillmentLabel} / {priceTypeLabel}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Right side: Location, Time, Username (gray) */}
-                      <div className="text-sm text-gray-500 sm:text-right">
-                        Captured from {location} •{" "}
-                        {formatTimeAgo(priceEntry.created_at)}
-                        {priceEntry.submitted_by_username && (
-                          <>
-                            {" "}
-                            •{" "}
-                            <Link
-                              href={`/user/${priceEntry.submitted_by_username}`}
-                              className="hover:text-blue-600 hover:underline"
+                    <div key={group.key} className="bg-white">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 px-4 py-3 hover:bg-gray-50">
+                        {/* Left side: Price, Store, Fulfillment, Price Type */}
+                        <div className="flex items-center gap-2 text-sm text-gray-900">
+                          {priceEntry.source_url ? (
+                            <a
+                              href={priceEntry.source_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="hover:text-blue-600"
                             >
-                              {priceEntry.submitted_by_username}
-                            </Link>
-                          </>
-                        )}
-                        {/* Show pending badge for user's own submissions */}
-                        {priceEntry.status === "pending" &&
-                          priceEntry.submitted_by === currentUserId && (
-                            <>
-                              {" "}
-                              •{" "}
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
-                                Pending Review
-                              </span>
-                            </>
+                              <PriceBreakdownTooltip
+                                price={priceEntry.price}
+                                basePrice={priceEntry.base_price}
+                                shippingCost={priceEntry.shipping_cost}
+                                fees={priceEntry.fees}
+                                currency={priceEntry.currency || "USD"}
+                                isFinalPrice={priceEntry.is_final_price}
+                              >
+                                <span className="inline-flex items-center gap-2">
+                                  <span
+                                    className={`h-2.5 w-2.5 rounded-full ${priceStatusClass} ring-1 ring-gray-300`}
+                                    role="img"
+                                    aria-label={priceStatusLabel}
+                                    title={priceStatusLabel}
+                                  />
+                                  <PriceDisplay
+                                    price={priceEntry.price}
+                                    currency={priceEntry.currency || "USD"}
+                                  />
+                                  {" @ "}
+                                  {storeName || priceEntry.source}
+                                </span>
+                              </PriceBreakdownTooltip>
+                            </a>
+                          ) : (
+                            <span>
+                              <PriceBreakdownTooltip
+                                price={priceEntry.price}
+                                basePrice={priceEntry.base_price}
+                                shippingCost={priceEntry.shipping_cost}
+                                fees={priceEntry.fees}
+                                currency={priceEntry.currency || "USD"}
+                                isFinalPrice={priceEntry.is_final_price}
+                              >
+                                <span className="inline-flex items-center gap-2">
+                                  <span
+                                    className={`h-2.5 w-2.5 rounded-full ${priceStatusClass} ring-1 ring-gray-300`}
+                                    role="img"
+                                    aria-label={priceStatusLabel}
+                                    title={priceStatusLabel}
+                                  />
+                                  <PriceDisplay
+                                    price={priceEntry.price}
+                                    currency={priceEntry.currency || "USD"}
+                                  />
+                                  {" @ "}
+                                  {storeName || priceEntry.source}
+                                </span>
+                              </PriceBreakdownTooltip>
+                            </span>
                           )}
+                        </div>
+
+                        {/* Right side: Location, Time, Username (gray) + Screenshot + Recapture */}
+                        <div className="flex items-center gap-3 text-sm text-gray-500 sm:text-right">
+                          {olderCount > 0 && (
+                            <button
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                toggleGroupExpanded(group.key);
+                              }}
+                              className="text-xs text-gray-500 hover:text-gray-700 hover:border-gray-400 inline-flex items-center gap-1 border border-gray-300 rounded px-1.5 py-0.5 transition-colors flex-shrink-0"
+                            >
+                              <span>{olderCount}</span>
+                              <span aria-hidden="true" className="inline-flex">
+                                {isExpanded ? (
+                                  <svg
+                                    viewBox="0 0 20 20"
+                                    className="h-3 w-3"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                  >
+                                    <path d="M6 12l4-4 4 4" />
+                                  </svg>
+                                ) : (
+                                  <svg
+                                    viewBox="0 0 20 20"
+                                    className="h-3 w-3"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                  >
+                                    <path d="M6 8l4 4 4-4" />
+                                  </svg>
+                                )}
+                              </span>
+                            </button>
+                          )}
+                          <div className="flex-1">
+                            {location} • {formatTimeAgo(priceEntry.created_at)}
+                            {priceEntry.submitted_by_username && (
+                              <>
+                                {" "}
+                                •{" "}
+                                <Link
+                                  href={`/user/${priceEntry.submitted_by_username}`}
+                                  className="hover:text-blue-600 hover:underline"
+                                >
+                                  {priceEntry.submitted_by_username}
+                                </Link>
+                              </>
+                            )}
+                            {/* Show pending badge for user's own submissions */}
+                            {priceEntry.status === "pending" &&
+                              priceEntry.submitted_by === currentUserId && (
+                                <>
+                                  {" "}
+                                  •{" "}
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+                                    Pending Review
+                                  </span>
+                                </>
+                              )}
+                          </div>
+                          {/* Recapture Button - moved to the right */}
+                          {priceEntry.source_url && (
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleRecapture(
+                                  priceEntry.source_url,
+                                  priceEntry.id,
+                                );
+                              }}
+                              disabled={revalidatingId === priceEntry.id}
+                              className="px-1.5 py-0.5 text-[10px] bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex-shrink-0 inline-flex items-center gap-1"
+                              title="Recapture this price with extension"
+                            >
+                              <span>
+                                {revalidatingId === priceEntry.id
+                                  ? "..."
+                                  : "Recapture"}
+                              </span>
+                              {!revalidatingId && (
+                                <svg
+                                  className="w-2.5 h-2.5"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                                  />
+                                </svg>
+                              )}
+                            </button>
+                          )}
+                        </div>
                       </div>
+                      {olderCount > 0 && isExpanded && (
+                        <div className="px-4 pb-3 pl-8 text-xs text-gray-500">
+                          <div className="mt-1 space-y-2">
+                            {olderEntries.map((entry) => {
+                              const entryStoreName = Array.isArray(entry.stores)
+                                ? entry.stores[0]?.name
+                                : entry.stores?.name;
+                              const entryStatusLabel = entry.is_final_price
+                                ? "Final price"
+                                : "Partial price";
+                              const entryStatusClass = entry.is_final_price
+                                ? "bg-emerald-500"
+                                : "bg-amber-400";
+
+                              return (
+                                <div
+                                  key={entry.id}
+                                  className="flex items-center justify-between gap-3"
+                                >
+                                  <div className="flex items-center gap-2 text-gray-700">
+                                    {entry.source_url ? (
+                                      <a
+                                        href={entry.source_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="hover:text-blue-600"
+                                      >
+                                        <PriceBreakdownTooltip
+                                          price={entry.price}
+                                          basePrice={entry.base_price}
+                                          shippingCost={entry.shipping_cost}
+                                          fees={entry.fees}
+                                          currency={entry.currency || "USD"}
+                                          isFinalPrice={entry.is_final_price}
+                                        >
+                                          <span className="inline-flex items-center gap-2">
+                                            <span
+                                              className={`h-2 w-2 rounded-full ${entryStatusClass} ring-1 ring-gray-300`}
+                                              role="img"
+                                              aria-label={entryStatusLabel}
+                                              title={entryStatusLabel}
+                                            />
+                                            <PriceDisplay
+                                              price={entry.price}
+                                              currency={entry.currency || "USD"}
+                                            />
+                                            {" @ "}
+                                            {entryStoreName || entry.source}
+                                          </span>
+                                        </PriceBreakdownTooltip>
+                                      </a>
+                                    ) : (
+                                      <PriceBreakdownTooltip
+                                        price={entry.price}
+                                        basePrice={entry.base_price}
+                                        shippingCost={entry.shipping_cost}
+                                        fees={entry.fees}
+                                        currency={entry.currency || "USD"}
+                                        isFinalPrice={entry.is_final_price}
+                                      >
+                                        <span className="inline-flex items-center gap-2">
+                                          <span
+                                            className={`h-2 w-2 rounded-full ${entryStatusClass} ring-1 ring-gray-300`}
+                                            role="img"
+                                            aria-label={entryStatusLabel}
+                                            title={entryStatusLabel}
+                                          />
+                                          <PriceDisplay
+                                            price={entry.price}
+                                            currency={entry.currency || "USD"}
+                                          />
+                                          {" @ "}
+                                          {entryStoreName || entry.source}
+                                        </span>
+                                      </PriceBreakdownTooltip>
+                                    )}
+                                  </div>
+                                  <div className="text-gray-400 flex-shrink-0">
+                                    {formatTimeAgo(entry.created_at)}
+                                    {entry.submitted_by_username && (
+                                      <>
+                                        {" "}
+                                        •{" "}
+                                        <Link
+                                          href={`/user/${entry.submitted_by_username}`}
+                                          className="hover:text-blue-600 hover:underline"
+                                        >
+                                          {entry.submitted_by_username}
+                                        </Link>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -998,109 +1356,156 @@ export function ProductDetailClient({
 
               {/* Pending Price List */}
               <div className="divide-y divide-gray-200">
-                {pendingPrices.map((priceEntry) => {
-                  // Get store name, handling array from Supabase
-                  const storeName = Array.isArray(priceEntry.stores)
-                    ? priceEntry.stores[0]?.name
-                    : priceEntry.stores?.name;
+                {(() => {
+                  console.log(
+                    "Before conditional - pendingPrices.length:",
+                    pendingPrices.length,
+                  );
+                  console.log(
+                    "Before conditional - check result:",
+                    pendingPrices.length === 0,
+                  );
+                  return null;
+                })()}
+                {pendingPrices.length === 0 ? (
+                  <div className="px-4 py-8 text-center text-gray-500">
+                    No pending prices for this product
+                  </div>
+                ) : (
+                  pendingPrices.map((priceEntry) => {
+                    console.log("Rendering pending price entry:", priceEntry);
 
-                  // Format fulfillment type
-                  const fulfillmentLabel =
-                    priceEntry.fulfillment_type === "delivery"
-                      ? "delivery"
-                      : priceEntry.fulfillment_type === "store"
-                      ? "store"
-                      : "person-used";
+                    // Get store name, handling array from Supabase
+                    const storeName = Array.isArray(priceEntry.stores)
+                      ? priceEntry.stores[0]?.name
+                      : priceEntry.stores?.name;
 
-                  // Format price type
-                  const priceTypeLabel = priceEntry.is_final_price
-                    ? "final price"
-                    : "non-final price";
+                    const priceStatusLabel = priceEntry.is_final_price
+                      ? "Final price"
+                      : "Partial price";
+                    const priceStatusClass = priceEntry.is_final_price
+                      ? "bg-emerald-500"
+                      : "bg-amber-400";
 
-                  // Format location
-                  const location = priceEntry.captured_by_city
-                    ? `${priceEntry.captured_by_city}, ${priceEntry.captured_by_country}`
-                    : priceEntry.captured_by_country;
+                    // Format location
+                    const location = priceEntry.captured_by_city
+                      ? `${priceEntry.captured_by_city}, ${priceEntry.captured_by_country}`
+                      : priceEntry.captured_by_country;
 
-                  // Handle submitted_by_user which can be array or object from Supabase
-                  const submittedByUser = priceEntry.submitted_by_user;
-                  const username = Array.isArray(submittedByUser)
-                    ? submittedByUser[0]?.username
-                    : submittedByUser?.username;
+                    // Handle submitted_by_user which can be array or object from Supabase
+                    const submittedByUser = priceEntry.submitted_by_user;
+                    const username = Array.isArray(submittedByUser)
+                      ? submittedByUser[0]?.username
+                      : submittedByUser?.username;
 
-                  return (
-                    <div
-                      key={priceEntry.id}
-                      className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 px-4 py-3 bg-yellow-50/30 hover:bg-yellow-50"
-                    >
-                      {/* Left side: Price, Store, Fulfillment, Price Type */}
-                      <div className="text-sm text-gray-900">
-                        {priceEntry.source_url ? (
-                          <a
-                            href={priceEntry.source_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="hover:text-blue-600 hover:underline underline-offset-4"
-                          >
-                            <PriceDisplay
-                              price={priceEntry.price}
-                              currency={priceEntry.currency || "USD"}
-                            />
-                            {" / "}
-                            {storeName || priceEntry.source} /{" "}
-                            {fulfillmentLabel} / {priceTypeLabel}
-                          </a>
-                        ) : (
-                          <span>
-                            <PriceDisplay
-                              price={priceEntry.price}
-                              currency={priceEntry.currency || "USD"}
-                            />
-                            {" / "}
-                            {storeName || priceEntry.source} /{" "}
-                            {fulfillmentLabel} / {priceTypeLabel}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Right side: Location, Time, Username, Action Buttons */}
-                      <div className="text-sm text-gray-500 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                        <span>
-                          Captured from {location} •{" "}
-                          {formatTimeAgo(priceEntry.created_at)}
-                          {username && (
-                            <>
-                              {" "}
-                              •{" "}
-                              <Link
-                                href={`/user/${username}`}
-                                className="hover:text-blue-600 hover:underline"
+                    return (
+                      <div
+                        key={priceEntry.id}
+                        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 px-4 py-3 bg-yellow-50/30 hover:bg-yellow-50"
+                      >
+                        {/* Screenshot Thumbnail */}
+                        {/* Left side: Price, Store, Fulfillment, Price Type */}
+                        <div className="text-sm text-gray-900">
+                          {priceEntry.source_url ? (
+                            <a
+                              href={priceEntry.source_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="hover:text-blue-600"
+                            >
+                              <PriceBreakdownTooltip
+                                price={priceEntry.price}
+                                basePrice={priceEntry.base_price}
+                                shippingCost={priceEntry.shipping_cost}
+                                fees={priceEntry.fees}
+                                currency={priceEntry.currency || "USD"}
+                                isFinalPrice={priceEntry.is_final_price}
                               >
-                                {username}
-                              </Link>
-                            </>
+                                <span className="inline-flex items-center gap-2">
+                                  <span
+                                    className={`h-2.5 w-2.5 rounded-full ${priceStatusClass} ring-1 ring-gray-300`}
+                                    role="img"
+                                    aria-label={priceStatusLabel}
+                                    title={priceStatusLabel}
+                                  />
+                                  <PriceDisplay
+                                    price={priceEntry.price}
+                                    currency={priceEntry.currency || "USD"}
+                                  />
+                                  {" @ "}
+                                  {storeName || priceEntry.source}
+                                </span>
+                              </PriceBreakdownTooltip>
+                            </a>
+                          ) : (
+                            <span>
+                              <PriceBreakdownTooltip
+                                price={priceEntry.price}
+                                basePrice={priceEntry.base_price}
+                                shippingCost={priceEntry.shipping_cost}
+                                fees={priceEntry.fees}
+                                currency={priceEntry.currency || "USD"}
+                                isFinalPrice={priceEntry.is_final_price}
+                              >
+                                <span className="inline-flex items-center gap-2">
+                                  <span
+                                    className={`h-2.5 w-2.5 rounded-full ${priceStatusClass} ring-1 ring-gray-300`}
+                                    role="img"
+                                    aria-label={priceStatusLabel}
+                                    title={priceStatusLabel}
+                                  />
+                                  <PriceDisplay
+                                    price={priceEntry.price}
+                                    currency={priceEntry.currency || "USD"}
+                                  />
+                                  {" @ "}
+                                  {storeName || priceEntry.source}
+                                </span>
+                              </PriceBreakdownTooltip>
+                            </span>
                           )}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleApprove(priceEntry.id)}
-                            disabled={reviewingId === priceEntry.id}
-                            className="px-3 py-1 bg-green-600 text-white text-xs font-medium rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => setShowRejectModal(priceEntry.id)}
-                            disabled={reviewingId === priceEntry.id}
-                            className="px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                          >
-                            Reject
-                          </button>
+                        </div>
+
+                        {/* Right side: Location, Time, Username, Action Buttons + Screenshot */}
+                        <div className="text-sm text-gray-500 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                          <span>
+                            {location} • {formatTimeAgo(priceEntry.created_at)}
+                            {username && (
+                              <>
+                                {" "}
+                                •{" "}
+                                <Link
+                                  href={`/user/${username}`}
+                                  className="hover:text-blue-600 hover:underline"
+                                >
+                                  {username}
+                                </Link>
+                              </>
+                            )}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                const isModerator =
+                                  userProfile?.role === "moderator" ||
+                                  userProfile?.role === "admin";
+                                if (isModerator) {
+                                  setShowReviewModal(priceEntry.id);
+                                } else {
+                                  setShowNonModeratorModal(true);
+                                }
+                              }}
+                              disabled={reviewingId === priceEntry.id}
+                              className="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              Review
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
             </div>
           )}
@@ -1115,41 +1520,121 @@ export function ProductDetailClient({
         currentLocation={userLocation}
       />
 
-      {/* Rejection Modal */}
-      {showRejectModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">
-              Reject Price Submission
-            </h3>
-            <p className="text-sm text-gray-600 mb-4">
-              Please provide a reason for rejecting this price submission:
-            </p>
-            <textarea
-              value={rejectionReason}
-              onChange={(e) => setRejectionReason(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              rows={4}
-              placeholder="e.g., Price seems incorrect, wrong store, etc."
+      {/* Review Modal */}
+      {showReviewModal &&
+        (() => {
+          const priceToReview = pendingPricesState.find(
+            (p) => p.id === showReviewModal,
+          );
+          if (!priceToReview) return null;
+
+          // Normalize stores (might be array from Supabase)
+          const stores = Array.isArray(priceToReview.stores)
+            ? priceToReview.stores[0]
+            : priceToReview.stores;
+          const submitted_by_user = Array.isArray(
+            priceToReview.submitted_by_user,
+          )
+            ? priceToReview.submitted_by_user?.[0]
+            : priceToReview.submitted_by_user;
+
+          // Use parent product data since this is already on the product page
+          const productData = {
+            id: product.id,
+            name: product.name,
+          };
+
+          // Ensure we have valid stores
+          if (!stores) {
+            console.error("Missing stores data:", { stores, priceToReview });
+            return null;
+          }
+
+          return (
+            <PriceReviewModal
+              priceData={{
+                id: priceToReview.id,
+                price: priceToReview.price,
+                base_price: priceToReview.base_price ?? null,
+                shipping_cost: priceToReview.shipping_cost ?? null,
+                fees: priceToReview.fees ?? null,
+                currency: priceToReview.currency || "USD",
+                source_url: priceToReview.source_url ?? null,
+                created_at: priceToReview.created_at,
+                captured_by_country: priceToReview.captured_by_country ?? null,
+                captured_by_city: priceToReview.captured_by_city ?? null,
+                condition: priceToReview.condition ?? null,
+                fulfillment_type: priceToReview.fulfillment_type ?? null,
+                product_type: priceToReview.product_type ?? null,
+                is_final_price: priceToReview.is_final_price ?? false,
+                screenshot_url: priceToReview.screenshot_url ?? null,
+                products: productData,
+                stores: stores,
+                submitted_by_user: submitted_by_user,
+              }}
+              onApprove={handleApprove}
+              onReject={handleReject}
+              onClose={() => setShowReviewModal(null)}
+              isReviewing={reviewingId === showReviewModal}
             />
-            <div className="flex gap-3 mt-4">
+          );
+        })()}
+
+      {/* Non-Moderator Modal */}
+      {showNonModeratorModal && (
+        <div className="fixed inset-0 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <h3 className="text-lg font-semibold mb-4">
+              Moderator Access Required
+            </h3>
+            <p className="text-sm text-gray-600 mb-6">
+              Only moderators can review price submissions. If you believe a
+              submission is incorrect, please wait for a moderator to review it.
+            </p>
+            <div className="flex justify-end">
               <button
-                onClick={() => {
-                  setShowRejectModal(null);
-                  setRejectionReason("");
-                }}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                onClick={() => setShowNonModeratorModal(false)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
               >
-                Cancel
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Extension Install Modal */}
+      {showExtensionInstallModal && (
+        <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setShowExtensionInstallModal(false)}
+          />
+          <div className="relative bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl p-8 max-w-lg w-full mx-4 shadow-2xl border border-blue-100">
+            <div className="text-center mb-6">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full mb-4">
+                <span className="text-4xl">🪙</span>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-3">
+                You need the PriceGit Extension to capture prices
+              </h3>
+              <p className="text-gray-600 text-base leading-relaxed">
+                Install it now and help the community verify accurate prices
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowExtensionInstallModal(false)}
+                className="flex-1 px-6 py-3 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+              >
+                Maybe Later
               </button>
               <button
-                onClick={() => handleReject(showRejectModal)}
-                disabled={
-                  !rejectionReason.trim() || reviewingId === showRejectModal
-                }
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                onClick={handleInstallExtension}
+                className="flex-1 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all font-semibold shadow-lg hover:shadow-xl transform hover:scale-105"
               >
-                {reviewingId === showRejectModal ? "Rejecting..." : "Reject"}
+                Get Extension
               </button>
             </div>
           </div>

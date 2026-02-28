@@ -1,29 +1,38 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import { getCorsHeaders } from "@/lib/cors";
+import { logApiCall } from "@/lib/apiLogger";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// CORS headers
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
-
-export async function OPTIONS() {
-  return NextResponse.json({}, { headers: corsHeaders });
+export async function OPTIONS(request: NextRequest) {
+  return NextResponse.json({}, { headers: getCorsHeaders(request) });
 }
 
 export async function POST(request: NextRequest) {
+  const corsHeaders = getCorsHeaders(request);
+  const startTime = Date.now();
   try {
     const { url, country } = await request.json();
 
-    if (!url) {
+    if (!url || typeof url !== "string") {
       return NextResponse.json(
         { success: false, error: "URL is required" },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+    if (url.length > 2000) {
+      return NextResponse.json(
+        { success: false, error: "URL too long. Maximum 2000 characters." },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+    if (country && (typeof country !== "string" || country.length > 100)) {
+      return NextResponse.json(
+        { success: false, error: "Country must be a string under 100 characters" },
         { status: 400, headers: corsHeaders }
       );
     }
@@ -149,6 +158,7 @@ export async function POST(request: NextRequest) {
       };
     });
 
+    logApiCall("check-page", 200, Date.now() - startTime);
     return NextResponse.json(
       {
         success: true,
@@ -160,6 +170,8 @@ export async function POST(request: NextRequest) {
     );
   } catch (err) {
     console.error("Error in check-page:", err);
+    const errorMsg = err instanceof Error ? err.message : "Unknown error";
+    logApiCall("check-page", 500, Date.now() - startTime, null, errorMsg);
     return NextResponse.json(
       { success: false, error: "Internal server error" },
       { status: 500, headers: corsHeaders }

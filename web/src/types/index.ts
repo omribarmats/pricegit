@@ -13,6 +13,9 @@ export interface Store {
 export interface PriceHistory {
   id: string;
   price: number;
+  base_price?: number | null;
+  shipping_cost?: number | null;
+  fees?: number | null;
   source: string;
   source_url: string;
   created_at: string;
@@ -34,7 +37,6 @@ export interface PriceHistory {
 export interface Product {
   id: string;
   name: string;
-  image_url?: string;
   price_history: PriceHistory[];
   hasAvailableStores?: boolean; // Computed field for UI
 }

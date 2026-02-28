@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { logApiCall } from "@/lib/apiLogger";
+import { checkRateLimit } from "@/lib/serverRateLimit";
 
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  let userId: string | null = null;
   try {
     // Check authentication via header
     const authHeader = request.headers.get("Authorization");
@@ -33,9 +37,29 @@ export async function POST(request: NextRequest) {
     } = await supabase.auth.getUser();
 
     if (authError || !user) {
+      logApiCall("prices-review", 401, Date.now() - startTime, null, "Authentication required");
       return NextResponse.json(
         { error: "Authentication required" },
         { status: 401 }
+      );
+    }
+
+    userId = user.id;
+
+    // Check rate limit
+    const rateLimit = await checkRateLimit(user.id, "prices-review");
+    if (!rateLimit.allowed) {
+      logApiCall("prices-review", 429, Date.now() - startTime, userId, "Rate limit exceeded");
+      return NextResponse.json(
+        {
+          error: `Rate limit exceeded. Try again in ${Math.ceil(rateLimit.retryAfter / 60)} minutes`,
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(rateLimit.retryAfter),
+          },
+        }
       );
     }
 
@@ -138,6 +162,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    logApiCall("prices-review", 200, Date.now() - startTime, userId, null, { action, priceId });
     return NextResponse.json({
       success: true,
       price: updatedPrice[0],
@@ -147,10 +172,12 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("Review price error:", error);
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    logApiCall("prices-review", 500, Date.now() - startTime, userId, errorMsg);
     return NextResponse.json(
       {
         error: "Failed to review price",
-        details: error instanceof Error ? error.message : "Unknown error",
+        details: errorMsg,
       },
       { status: 500 }
     );

@@ -50,7 +50,7 @@ export default async function UserProfilePage({ params }: PageProps) {
         id,
         name
       )
-    `
+    `,
     )
     .eq("user_id", userProfile.id)
     .order("created_at", { ascending: false });
@@ -76,10 +76,10 @@ export default async function UserProfilePage({ params }: PageProps) {
       status,
       reviewed_at,
       rejection_reason,
+      screenshot_url,
       products (
         id,
-        name,
-        image_url
+        name
       ),
       stores (
         id,
@@ -90,21 +90,27 @@ export default async function UserProfilePage({ params }: PageProps) {
       reviewed_by_user:users!reviewed_by (
         username
       )
-    `
+    `,
     )
     .eq("submitted_by", userProfile.id)
     .order("created_at", { ascending: false });
 
   // Transform the data to match expected types (Supabase returns arrays for joins)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const transformedPriceSubmissions = (priceSubmissions || []).map((submission: any) => ({
-    ...submission,
-    products: Array.isArray(submission.products) ? submission.products[0] : submission.products,
-    stores: Array.isArray(submission.stores) ? submission.stores[0] : submission.stores,
-    reviewed_by_user: Array.isArray(submission.reviewed_by_user)
-      ? submission.reviewed_by_user[0] || null
-      : submission.reviewed_by_user,
-  }));
+  const transformedPriceSubmissions = (priceSubmissions || []).map(
+    (submission: any) => ({
+      ...submission,
+      products: Array.isArray(submission.products)
+        ? submission.products[0]
+        : submission.products,
+      stores: Array.isArray(submission.stores)
+        ? submission.stores[0]
+        : submission.stores,
+      reviewed_by_user: Array.isArray(submission.reviewed_by_user)
+        ? submission.reviewed_by_user[0] || null
+        : submission.reviewed_by_user,
+    }),
+  );
 
   return (
     <UserProfileClient
