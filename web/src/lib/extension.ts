@@ -1,3 +1,6 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+declare const chrome: any;
+
 /**
  * Extension detection and communication utilities
  */
@@ -23,7 +26,7 @@ export async function checkExtensionInstalled(): Promise<boolean> {
       chrome.runtime.sendMessage(
         EXTENSION_ID,
         { action: "ping" },
-        (response) => {
+        (response: any) => {
           // If we get any response, the extension is installed
           if (chrome.runtime.lastError) {
             resolve(false);
@@ -59,7 +62,7 @@ export async function openTabWithScreenshot(
           action: "openTabWithScreenshot",
           url: sourceUrl,
         },
-        (response) => {
+        (response: any) => {
           if (chrome.runtime.lastError) {
             console.error(
               "Extension communication error:",
@@ -100,7 +103,7 @@ export async function openTabWithInstructionPopup(
           action: "openTabWithInstructionPopup",
           url: sourceUrl,
         },
-        (response) => {
+        (response: any) => {
           if (chrome.runtime.lastError) {
             console.error(
               "Extension communication error:",
