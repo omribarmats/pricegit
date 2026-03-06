@@ -223,7 +223,7 @@ function handleSearchInput(e) {
 // Search for products
 async function searchProducts(query) {
   try {
-    const response = await fetch("http://localhost:3000/api/search-product", {
+    const response = await fetch("https://pricegit.com/api/search-product", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query }),
@@ -303,7 +303,7 @@ async function loadAlternatives(product) {
       location: userLocation,
     };
 
-    const response = await fetch("http://localhost:3000/api/get-alternatives", {
+    const response = await fetch("https://pricegit.com/api/get-alternatives", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -739,7 +739,7 @@ async function searchLocationAddress(query) {
 
   try {
     const response = await fetch(
-      `http://localhost:3000/api/geocode?q=${encodeURIComponent(query)}`,
+      `https://pricegit.com/api/geocode?q=${encodeURIComponent(query)}`,
     );
 
     if (response.status === 429) {
@@ -915,7 +915,7 @@ async function initAuth() {
 
     // Also check if user has open tab with localhost:3000 and check localStorage there
     try {
-      const tabs = await chrome.tabs.query({ url: "http://localhost:3000/*" });
+      const tabs = await chrome.tabs.query({ url: "https://pricegit.com/*" });
       if (tabs.length > 0) {
         // Execute script to check localStorage
         const [response] = await chrome.scripting.executeScript({
@@ -1014,7 +1014,7 @@ async function initAuth() {
 // Handle signin button
 function handleSignin() {
   chrome.tabs.create({
-    url: "http://localhost:3000/login?source=extension",
+    url: "https://pricegit.com/login?source=extension",
   });
 }
 
@@ -1032,7 +1032,7 @@ async function handleLogout() {
 
     // Clear web app localStorage if a web app tab is open to prevent re-sync
     try {
-      const tabs = await chrome.tabs.query({ url: "http://localhost:3000/*" });
+      const tabs = await chrome.tabs.query({ url: "https://pricegit.com/*" });
       if (tabs.length > 0) {
         await chrome.scripting.executeScript({
           target: { tabId: tabs[0].id },

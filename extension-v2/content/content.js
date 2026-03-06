@@ -62,6 +62,7 @@ let croppedDataUrl = null;
 let formData = {};
 let userLocation = null;
 let locationPromise = null; // Background location fetch
+let confirmedProductUrl = null; // Product URL confirmed in step wizard
 
 // Crop selection state
 let cropRect = { x: 100, y: 100, width: 400, height: 300 };
@@ -174,15 +175,206 @@ async function startLLMCapture() {
     }
 
     // Start location fetch in background (non-blocking)
-    // Location is only needed at analyze/submit time, not for screenshot
     locationPromise = getUserLocation()
       .then((loc) => {
         userLocation = loc;
         return loc;
       })
-      .catch(() => null); // Handle denial later at analyze time
+      .catch(() => null);
 
-    // Capture screenshot immediately — no waiting for location
+    // Show the two-step wizard instead of capturing immediately
+    showStepWizard();
+  } catch (error) {
+    alert("Failed to start capture: " + error.message);
+  }
+}
+
+// ==========================================
+// TWO-STEP CAPTURE WIZARD
+// ==========================================
+
+function showStepWizard(resumeStep2 = false, savedUrl = null) {
+  // Remove any existing wizard
+  const existing = document.getElementById("pc-step-wizard");
+  if (existing) existing.remove();
+
+  const currentUrl = savedUrl || window.location.href;
+  confirmedProductUrl = resumeStep2 ? savedUrl : null;
+
+  const wizard = document.createElement("div");
+  wizard.id = "pc-step-wizard";
+  wizard.innerHTML = `
+    <div class="pc-wizard-overlay">
+      <div class="pc-wizard-content">
+        <div class="pc-wizard-header">
+          <div class="pc-wizard-header-left">
+            <span class="pc-wizard-title">Capture Price</span>
+          </div>
+          <button class="pc-close-btn" id="pc-wizard-close">&times;</button>
+        </div>
+        <div class="pc-wizard-body">
+          <!-- Step 1 -->
+          <div class="pc-wizard-step ${resumeStep2 ? "pc-wizard-step-done" : ""}" id="pc-wizard-step1">
+            <div class="pc-wizard-step-header">
+              <span class="pc-wizard-step-badge ${resumeStep2 ? "pc-wizard-badge-done" : ""}">
+                ${resumeStep2 ? "&#10003;" : "1"}
+              </span>
+              <div class="pc-wizard-step-title-group">
+                <span class="pc-wizard-step-title">Product Link</span>
+                <span class="pc-wizard-step-subtitle">${resumeStep2 ? "Confirmed" : "Confirm you're on the product page"}</span>
+              </div>
+              ${resumeStep2 ? '<button class="pc-wizard-change-btn" id="pc-wizard-change">Change</button>' : ""}
+            </div>
+            <div class="pc-wizard-step-body" id="pc-wizard-step1-body" style="${resumeStep2 ? "display:none" : ""}">
+              <div class="pc-wizard-url-box" id="pc-wizard-url-box">
+                <span class="pc-wizard-url-text" id="pc-wizard-url-text">${escapeHtml(currentUrl)}</span>
+              </div>
+              <p class="pc-wizard-step-hint">Navigate to the product page if you're not already there. The URL above updates automatically.</p>
+              <button class="pc-wizard-confirm-btn" id="pc-wizard-confirm">
+                Confirm Product Link
+              </button>
+            </div>
+            ${resumeStep2 ? `<div class="pc-wizard-confirmed-url" id="pc-wizard-confirmed-url"><span class="pc-wizard-url-text">${escapeHtml(savedUrl)}</span></div>` : ""}
+          </div>
+
+          <!-- Step 2 -->
+          <div class="pc-wizard-step ${resumeStep2 ? "" : "pc-wizard-step-disabled"}" id="pc-wizard-step2">
+            <div class="pc-wizard-step-header">
+              <span class="pc-wizard-step-badge ${resumeStep2 ? "" : "pc-wizard-badge-disabled"}">2</span>
+              <div class="pc-wizard-step-title-group">
+                <span class="pc-wizard-step-title">Capture Final Price</span>
+                <span class="pc-wizard-step-subtitle">Screenshot the page showing the total price</span>
+              </div>
+            </div>
+            <div class="pc-wizard-step-body" id="pc-wizard-step2-body" style="${resumeStep2 ? "" : "display:none"}">
+              <p class="pc-wizard-step-hint">Navigate to where the final price is shown (including taxes, shipping, and fees), then capture.</p>
+              <button class="pc-wizard-capture-btn" id="pc-wizard-capture">
+                Capture Screenshot
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(wizard);
+
+  // Close button
+  document.getElementById("pc-wizard-close").addEventListener("click", () => {
+    closeStepWizard();
+  });
+
+  // Overlay click to close
+  wizard.querySelector(".pc-wizard-overlay").addEventListener("click", (e) => {
+    if (e.target.classList.contains("pc-wizard-overlay")) {
+      closeStepWizard();
+    }
+  });
+
+  // Escape key
+  const handleEscape = (e) => {
+    if (e.key === "Escape") {
+      closeStepWizard();
+      document.removeEventListener("keydown", handleEscape);
+    }
+  };
+  document.addEventListener("keydown", handleEscape);
+
+  // Step 1: Confirm button
+  const confirmBtn = document.getElementById("pc-wizard-confirm");
+  if (confirmBtn) {
+    confirmBtn.addEventListener("click", () => {
+      confirmStep1();
+    });
+  }
+
+  // Step 2: Capture button
+  const captureBtn = document.getElementById("pc-wizard-capture");
+  if (captureBtn) {
+    captureBtn.addEventListener("click", () => {
+      proceedWithCapture();
+    });
+  }
+
+  // Change button (when resuming step 2)
+  const changeBtn = document.getElementById("pc-wizard-change");
+  if (changeBtn) {
+    changeBtn.addEventListener("click", () => {
+      // Reset to step 1
+      chrome.storage.local.remove(["pcWizardState"]);
+      closeStepWizard();
+      showStepWizard(false);
+    });
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function confirmStep1() {
+  confirmedProductUrl = window.location.href;
+
+  // Save state for navigation persistence
+  chrome.storage.local.set({
+    pcWizardState: {
+      confirmedProductUrl: confirmedProductUrl,
+      wizardStep: 2,
+      timestamp: Date.now(),
+    },
+  });
+
+  // Update UI: mark step 1 as done
+  const step1 = document.getElementById("pc-wizard-step1");
+  step1.classList.add("pc-wizard-step-done");
+
+  const badge = step1.querySelector(".pc-wizard-step-badge");
+  badge.classList.add("pc-wizard-badge-done");
+  badge.innerHTML = "&#10003;";
+
+  const subtitle = step1.querySelector(".pc-wizard-step-subtitle");
+  subtitle.textContent = "Confirmed";
+
+  // Hide step 1 body, show confirmed URL
+  document.getElementById("pc-wizard-step1-body").style.display = "none";
+  const confirmedDisplay = document.createElement("div");
+  confirmedDisplay.className = "pc-wizard-confirmed-url";
+  confirmedDisplay.innerHTML = `<span class="pc-wizard-url-text">${escapeHtml(confirmedProductUrl)}</span>`;
+  step1.appendChild(confirmedDisplay);
+
+  // Add change button
+  const headerDiv = step1.querySelector(".pc-wizard-step-header");
+  const changeBtn = document.createElement("button");
+  changeBtn.className = "pc-wizard-change-btn";
+  changeBtn.textContent = "Change";
+  changeBtn.addEventListener("click", () => {
+    chrome.storage.local.remove(["pcWizardState"]);
+    closeStepWizard();
+    showStepWizard(false);
+  });
+  headerDiv.appendChild(changeBtn);
+
+  // Enable step 2
+  const step2 = document.getElementById("pc-wizard-step2");
+  step2.classList.remove("pc-wizard-step-disabled");
+  step2.querySelector(".pc-wizard-step-badge").classList.remove("pc-wizard-badge-disabled");
+  document.getElementById("pc-wizard-step2-body").style.display = "";
+}
+
+function closeStepWizard() {
+  const wizard = document.getElementById("pc-step-wizard");
+  if (wizard) wizard.remove();
+  // Don't clear session storage here — only clear on cancel or complete
+}
+
+async function proceedWithCapture() {
+  // Close wizard before capturing
+  closeStepWizard();
+
+  try {
     const response = await chrome.runtime.sendMessage({
       action: "captureScreenshot",
     });
@@ -192,13 +384,45 @@ async function startLLMCapture() {
     }
 
     screenshotDataUrl = response.dataUrl;
-
-    // Show crop selection
     showCropSelection();
   } catch (error) {
-    alert("Failed to start capture: " + error.message);
+    alert("Failed to capture screenshot: " + error.message);
   }
 }
+
+// Check for pending wizard state on page load (navigation persistence)
+async function checkPendingWizard() {
+  try {
+    // Don't show wizard if one is already open
+    if (document.getElementById("pc-step-wizard")) return;
+
+    const result = await chrome.storage.local.get(["pcWizardState"]);
+    if (result.pcWizardState) {
+      const { confirmedProductUrl: savedUrl, wizardStep, timestamp } = result.pcWizardState;
+
+      // Expire after 10 minutes
+      if (Date.now() - timestamp > 10 * 60 * 1000) {
+        chrome.storage.local.remove(["pcWizardState"]);
+        return;
+      }
+
+      if (wizardStep === 2 && savedUrl) {
+        showStepWizard(true, savedUrl);
+      }
+    }
+  } catch {
+    // Storage error — non-critical
+  }
+}
+
+// Run check immediately and also after a short delay for reliability
+checkPendingWizard();
+setTimeout(checkPendingWizard, 500);
+
+// Also listen for page show events (back/forward navigation)
+window.addEventListener("pageshow", () => {
+  setTimeout(checkPendingWizard, 300);
+});
 
 // ==========================================
 // GEOLOCATION
@@ -241,7 +465,7 @@ async function getUserLocation() {
 async function reverseGeocode(latitude, longitude) {
   const result = await chrome.runtime.sendMessage({
     action: "fetchAPI",
-    url: `http://localhost:3000/api/reverse-geocode?lat=${latitude}&lng=${longitude}`,
+    url: `https://pricegit.com/api/reverse-geocode?lat=${latitude}&lng=${longitude}`,
   });
 
   if (result.success && result.data.success) {
@@ -843,7 +1067,7 @@ async function analyzeScreenshot() {
   try {
     const result = await chrome.runtime.sendMessage({
       action: "fetchAPI",
-      url: "http://localhost:3000/api/analyze-screenshot",
+      url: "https://pricegit.com/api/analyze-screenshot",
       options: {
         method: "POST",
         headers: {
@@ -852,7 +1076,7 @@ async function analyzeScreenshot() {
         },
         body: JSON.stringify({
           imageDataUrl: processedImage,
-          pageUrl: window.location.href,
+          pageUrl: confirmedProductUrl || window.location.href,
           pageTitle: document.title,
         }),
       },
@@ -911,7 +1135,7 @@ async function analyzeScreenshot() {
         isFinalPrice: isFinal,
         storeName: extractStoreName(),
         location: userLocation,
-        productUrl: window.location.href,
+        productUrl: confirmedProductUrl || window.location.href,
         screenshotDataUrl: processedImage,
       };
       showFormModal();
@@ -927,7 +1151,7 @@ async function analyzeScreenshot() {
         isFinalPrice: false,
         storeName: extractStoreName(),
         location: userLocation,
-        productUrl: window.location.href,
+        productUrl: confirmedProductUrl || window.location.href,
         screenshotDataUrl: getProcessedBlurDataUrl(),
       };
       showFormModal();
@@ -945,7 +1169,7 @@ async function analyzeScreenshot() {
       isFinalPrice: false,
       storeName: extractStoreName(),
       location: userLocation,
-      productUrl: window.location.href,
+      productUrl: confirmedProductUrl || window.location.href,
       screenshotDataUrl: getProcessedBlurDataUrl(),
     };
     showFormModal();
@@ -954,6 +1178,11 @@ async function analyzeScreenshot() {
 }
 
 function extractStoreName() {
+  if (confirmedProductUrl) {
+    try {
+      return new URL(confirmedProductUrl).hostname.replace("www.", "");
+    } catch {}
+  }
   return window.location.hostname.replace("www.", "");
 }
 
@@ -1532,7 +1761,7 @@ async function searchProducts(query) {
   try {
     const result = await chrome.runtime.sendMessage({
       action: "fetchAPI",
-      url: "http://localhost:3000/api/search-product",
+      url: "https://pricegit.com/api/search-product",
       options: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1601,7 +1830,7 @@ async function searchDeliveryLocations(query) {
   try {
     const result = await chrome.runtime.sendMessage({
       action: "fetchAPI",
-      url: `http://localhost:3000/api/geocode?q=${encodeURIComponent(query)}`,
+      url: `https://pricegit.com/api/geocode?q=${encodeURIComponent(query)}`,
       options: {
         method: "GET",
       },
@@ -1791,7 +2020,7 @@ async function submitPrice() {
     const doSavePrice = async (token) => {
       return chrome.runtime.sendMessage({
         action: "fetchAPI",
-        url: "http://localhost:3000/api/save-price",
+        url: "https://pricegit.com/api/save-price",
         options: {
           method: "POST",
           headers: {
@@ -1812,6 +2041,8 @@ async function submitPrice() {
       formData = {};
       blurRectangles = [];
       blurCanvasImage = null;
+      confirmedProductUrl = null;
+      chrome.storage.local.remove(["pcWizardState"]);
 
       closeModal();
       showSuccessModal(
