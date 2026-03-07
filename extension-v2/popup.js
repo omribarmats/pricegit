@@ -891,12 +891,10 @@ async function startPriceCapture() {
       currentWindow: true,
     });
 
-    // Start the LLM capture flow
     await chrome.tabs.sendMessage(tab.id, {
       action: "startPriceCapture",
     });
 
-    // Close the popup
     window.close();
   } catch (error) {
     alert(
