@@ -282,14 +282,9 @@ export function ProductDetailClient({
   const locationDropdownRef = useRef<HTMLDivElement>(null);
   const fulfillmentDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Fetch pending prices client-side (server can't access user session)
+  // Fetch pending prices client-side
   useEffect(() => {
     const fetchPendingPrices = async () => {
-      if (!user) {
-        setPendingPricesState([]);
-        return;
-      }
-
       const { data, error } = await supabase
         .from("price_history")
         .select(
