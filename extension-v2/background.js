@@ -108,9 +108,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // Keep channel open for async
   }
 
-  const SUPABASE_URL = "https://qwclzmzadecdovdewple.supabase.co";
+  const SUPABASE_URL = "https://gwjrsmzqjxgpuhhkpkqn.supabase.co";
   const SUPABASE_ANON_KEY =
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF3Y2x6bXphZGVjZG92ZGV3cGxlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMyMjQ3OTYsImV4cCI6MjA3ODgwMDc5Nn0.IHq3PAijNaIXqAUuSg4TuSgOGzjud8vi5jz-siWuoqc";
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3anJzbXpxanhncHVoaGtwa3FuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0NzEzMzEsImV4cCI6MjA4ODA0NzMzMX0.6oARKMJ7VChw7j1cP2VWIKJCZZ20deDAL4ymQ0E4LHA";
 
   async function refreshAccessToken() {
     const { refreshToken } = await chrome.storage.local.get(["refreshToken"]);
@@ -284,7 +284,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     (async () => {
       try {
         const tabs = await chrome.tabs.query({
-          url: "http://localhost:3000/*",
+          url: "https://pricegit.com/*",
         });
         if (!tabs.length) {
           sendResponse({ success: false, error: "No web app tab found" });
@@ -331,9 +331,9 @@ setInterval(
     ]);
 
     if (authToken && refreshToken) {
-      const SUPABASE_URL = "https://qwclzmzadecdovdewple.supabase.co";
+      const SUPABASE_URL = "https://gwjrsmzqjxgpuhhkpkqn.supabase.co";
       const SUPABASE_ANON_KEY =
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF3Y2x6bXphZGVjZG92ZGV3cGxlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMyMjQ3OTYsImV4cCI6MjA3ODgwMDc5Nn0.IHq3PAijNaIXqAUuSg4TuSgOGzjud8vi5jz-siWuoqc";
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3anJzbXpxanhncHVoaGtwa3FuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0NzEzMzEsImV4cCI6MjA4ODA0NzMzMX0.6oARKMJ7VChw7j1cP2VWIKJCZZ20deDAL4ymQ0E4LHA";
 
       try {
         const response = await fetch(

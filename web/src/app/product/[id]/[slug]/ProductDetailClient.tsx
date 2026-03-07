@@ -301,6 +301,8 @@ export function ProductDetailClient({
           store_id,
           captured_by_country,
           captured_by_city,
+          delivery_country,
+          delivery_city,
           fulfillment_type,
           condition,
           product_type,
@@ -1072,10 +1074,12 @@ export function ProductDetailClient({
                     ? "bg-emerald-500"
                     : "bg-amber-400";
 
-                  // Format location
-                  const location = priceEntry.captured_by_city
-                    ? `${priceEntry.captured_by_city}, ${priceEntry.captured_by_country}`
-                    : priceEntry.captured_by_country;
+                  // Format location — prefer delivery location when set
+                  const locCity = priceEntry.delivery_city || priceEntry.captured_by_city;
+                  const locCountry = priceEntry.delivery_country || priceEntry.captured_by_country;
+                  const location = locCity
+                    ? `${locCity}, ${locCountry}`
+                    : locCountry;
 
                   return (
                     <div key={group.key} className="bg-white">
@@ -1387,10 +1391,12 @@ export function ProductDetailClient({
                       ? "bg-emerald-500"
                       : "bg-amber-400";
 
-                    // Format location
-                    const location = priceEntry.captured_by_city
-                      ? `${priceEntry.captured_by_city}, ${priceEntry.captured_by_country}`
-                      : priceEntry.captured_by_country;
+                    // Format location — prefer delivery location when set
+                    const locCity = priceEntry.delivery_city || priceEntry.captured_by_city;
+                    const locCountry = priceEntry.delivery_country || priceEntry.captured_by_country;
+                    const location = locCity
+                      ? `${locCity}, ${locCountry}`
+                      : locCountry;
 
                     // Handle submitted_by_user which can be array or object from Supabase
                     const submittedByUser = priceEntry.submitted_by_user;

@@ -117,6 +117,8 @@ export default async function ProductPage({ params }: PageProps) {
         store_id,
         captured_by_country,
         captured_by_city,
+        delivery_country,
+        delivery_city,
         fulfillment_type,
         condition,
         product_type,

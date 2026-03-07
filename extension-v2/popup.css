@@ -879,3 +879,25 @@ a.price-left:hover {
   background: #e5e7eb;
   border-color: #d1d5db;
 }
+
+/* Extension Footer */
+.extension-footer {
+  text-align: center;
+  padding: 8px 0 4px;
+  font-size: 10px;
+  color: #9ca3af;
+}
+
+.extension-footer a {
+  color: #9ca3af;
+  text-decoration: none;
+}
+
+.extension-footer a:hover {
+  color: #6b7280;
+  text-decoration: underline;
+}
+
+.extension-footer span {
+  margin: 0 4px;
+}

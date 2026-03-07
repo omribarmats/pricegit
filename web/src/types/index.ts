@@ -18,10 +18,13 @@ export interface PriceHistory {
   fees?: number | null;
   source: string;
   source_url: string;
+  capture_url?: string | null;
   created_at: string;
   store_id: string;
   captured_by_country: string;
   captured_by_city?: string | null;
+  delivery_country?: string | null;
+  delivery_city?: string | null;
   fulfillment_type: "delivery" | "store" | "person";
   condition: "new" | "used";
   product_type: "physical" | "digital";
