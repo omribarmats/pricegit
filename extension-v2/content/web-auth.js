@@ -1,4 +1,4 @@
-// Content script that runs on localhost:3000 to facilitate auth communication
+// Content script that runs on pricegit.com to facilitate auth communication
 // Checks localStorage for auth token and sends it to extension
 
 (function () {

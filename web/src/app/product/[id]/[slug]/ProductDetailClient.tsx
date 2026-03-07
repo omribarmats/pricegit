@@ -38,6 +38,8 @@ interface LatestPrice {
   store_id: string;
   captured_by_country: string;
   captured_by_city: string | null;
+  delivery_country?: string | null;
+  delivery_city?: string | null;
   fulfillment_type: "delivery" | "store" | "person";
   condition: "new" | "used";
   product_type: "physical" | "digital";
@@ -107,6 +109,8 @@ function mapHistoryToLatestPrice(
     store_id: history.store_id,
     captured_by_country: history.captured_by_country,
     captured_by_city: history.captured_by_city ?? null,
+    delivery_country: history.delivery_country,
+    delivery_city: history.delivery_city,
     fulfillment_type: history.fulfillment_type,
     condition: history.condition,
     product_type: history.product_type,
@@ -278,14 +282,9 @@ export function ProductDetailClient({
   const locationDropdownRef = useRef<HTMLDivElement>(null);
   const fulfillmentDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Fetch pending prices client-side (server can't access user session)
+  // Fetch pending prices client-side
   useEffect(() => {
     const fetchPendingPrices = async () => {
-      if (!user) {
-        setPendingPricesState([]);
-        return;
-      }
-
       const { data, error } = await supabase
         .from("price_history")
         .select(
@@ -301,6 +300,8 @@ export function ProductDetailClient({
           store_id,
           captured_by_country,
           captured_by_city,
+          delivery_country,
+          delivery_city,
           fulfillment_type,
           condition,
           product_type,
@@ -1072,10 +1073,12 @@ export function ProductDetailClient({
                     ? "bg-emerald-500"
                     : "bg-amber-400";
 
-                  // Format location
-                  const location = priceEntry.captured_by_city
-                    ? `${priceEntry.captured_by_city}, ${priceEntry.captured_by_country}`
-                    : priceEntry.captured_by_country;
+                  // Format location — prefer delivery location when set
+                  const locCity = priceEntry.delivery_city || priceEntry.captured_by_city;
+                  const locCountry = priceEntry.delivery_country || priceEntry.captured_by_country;
+                  const location = locCity
+                    ? `${locCity}, ${locCountry}`
+                    : locCountry;
 
                   return (
                     <div key={group.key} className="bg-white">
@@ -1387,10 +1390,12 @@ export function ProductDetailClient({
                       ? "bg-emerald-500"
                       : "bg-amber-400";
 
-                    // Format location
-                    const location = priceEntry.captured_by_city
-                      ? `${priceEntry.captured_by_city}, ${priceEntry.captured_by_country}`
-                      : priceEntry.captured_by_country;
+                    // Format location — prefer delivery location when set
+                    const locCity = priceEntry.delivery_city || priceEntry.captured_by_city;
+                    const locCountry = priceEntry.delivery_country || priceEntry.captured_by_country;
+                    const location = locCity
+                      ? `${locCity}, ${locCountry}`
+                      : locCountry;
 
                     // Handle submitted_by_user which can be array or object from Supabase
                     const submittedByUser = priceEntry.submitted_by_user;

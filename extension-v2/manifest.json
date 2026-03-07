@@ -6,19 +6,19 @@
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
-      "16": "icon.png",
-      "48": "icon.png",
-      "128": "icon.png"
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
     }
   },
   "icons": {
-    "16": "icon.png",
-    "48": "icon.png",
-    "128": "icon.png"
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
   },
-  "permissions": ["storage", "activeTab", "tabs", "scripting"],
+  "permissions": ["storage", "tabs", "scripting", "activeTab"],
   "host_permissions": [
-    "http://localhost:3000/*",
+    "https://pricegit.com/*",
     "https://*.supabase.co/*"
   ],
   "background": {
@@ -31,18 +31,18 @@
       "css": ["content/content.css"]
     },
     {
-      "matches": ["http://localhost:3000/*"],
+      "matches": ["https://pricegit.com/*"],
       "js": ["content/web-auth.js"],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["icon.png"],
+      "resources": ["icon.png", "icon16.png", "icon48.png", "icon128.png"],
       "matches": ["<all_urls>"]
     }
   ],
   "externally_connectable": {
-    "matches": ["http://localhost:3000/*"]
+    "matches": ["https://pricegit.com/*"]
   }
 }

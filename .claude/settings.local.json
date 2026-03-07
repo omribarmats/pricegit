@@ -5,7 +5,11 @@
       "Bash(git add:*)",
       "Bash(git checkout:*)",
       "Bash(npm run build:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd screenshot capture to price submission flow\n\nExtension changes:\n- Add tabs permission for captureVisibleTab API\n- Add captureScreenshot handler in background.js\n- Capture screenshot when user selects price element\n- New side-by-side modal UI with screenshot panel and form\n- Canvas-based blur tool for privacy \\(draw rectangles to pixelate\\)\n- Include screenshot URL and isFinalPrice in submission\n\nBackend changes:\n- New /api/upload-screenshot endpoint for Supabase Storage\n- Update save-price to accept screenshotUrl and store in DB\n- Update moderate page to display screenshot proof\n- Add screenshot_url field to PriceHistory type\n\nType fixes:\n- Add missing fields to Store interface \\(latitude, longitude, etc.\\)\n- Add condition, fulfillment_type, product_type to LatestPrice\n- Fix array handling for Supabase joined relations\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git commit:*)",
+      "Bash(npm install --save-dev @types/chrome)",
+      "Bash(git rm web/DESIGN.md web/LOCATION_SETUP.md web/MAPBOX_SETUP.md web/MIGRATION-GUIDE.md web/RATE_LIMITING.md web/RUN_MIGRATION.md web/docs/AUTH_ISSUES.md web/migration-add-regional-pricing.sql web/supabase-schema.sql)"
     ]
   }
 }
