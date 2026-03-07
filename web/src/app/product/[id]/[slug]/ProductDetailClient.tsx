@@ -38,6 +38,8 @@ interface LatestPrice {
   store_id: string;
   captured_by_country: string;
   captured_by_city: string | null;
+  delivery_country?: string | null;
+  delivery_city?: string | null;
   fulfillment_type: "delivery" | "store" | "person";
   condition: "new" | "used";
   product_type: "physical" | "digital";
@@ -107,6 +109,8 @@ function mapHistoryToLatestPrice(
     store_id: history.store_id,
     captured_by_country: history.captured_by_country,
     captured_by_city: history.captured_by_city ?? null,
+    delivery_country: history.delivery_country,
+    delivery_city: history.delivery_city,
     fulfillment_type: history.fulfillment_type,
     condition: history.condition,
     product_type: history.product_type,
