@@ -190,7 +190,15 @@ async function startLLMCapture() {
     handleAnalysisResult(analysisResult);
   } catch (error) {
     hideAnalyzingOverlay();
-    alert("Failed to capture price: " + error.message);
+    if (error.message === "LOGIN_REQUIRED") {
+      showSessionExpiredModal();
+    } else {
+      showWarningModal(
+        "Capture Failed",
+        "Failed to capture price: " + error.message,
+        "OK",
+      );
+    }
   }
 }
 
@@ -282,6 +290,14 @@ function handleAnalysisResult(result) {
     return;
   }
 
+  // Handle expired session
+  if (result.status === 401) {
+    chrome.storage.local.remove(["authToken", "refreshToken", "username"]);
+    chrome.runtime.sendMessage({ action: "clearWebAuth" });
+    showSessionExpiredModal();
+    return;
+  }
+
   if (result.success && result.data.success) {
     const extracted = result.data.data;
 
@@ -298,8 +314,9 @@ function handleAnalysisResult(result) {
     if (!extracted.hasPrice) {
       showWarningModal(
         "No Price Detected",
-        "We couldn't find a price in your screenshot. Please recapture the image with:\n\n- A clearly visible price\n- The product name\n- Preferably on a product page with price breakdown",
-        "Recapture Screenshot",
+        "We couldn't find a price on this page. Navigate to a page with:\n\n- A clearly visible price\n- The product name\n- Preferably on a checkout page with price breakdown\n\nThen click Capture Price again.",
+        "OK",
+        () => {},
       );
       return;
     }
@@ -340,6 +357,7 @@ function handleAnalysisResult(result) {
 
     selectedProductUrl = window.location.href;
     showFormModal();
+    console.error("PriceGit analysis failed:", JSON.stringify(result, null, 2));
     alert(
       "Could not automatically extract price details. Please fill in the form manually.",
     );
@@ -446,7 +464,7 @@ function showLocationRequiredModal() {
   });
 }
 
-function showWarningModal(title, message, buttonText = "Try Again") {
+function showWarningModal(title, message, buttonText = "Try Again", onRetry = null) {
   const existing = document.getElementById("pc-warning-modal");
   if (existing) existing.remove();
 
@@ -469,10 +487,56 @@ function showWarningModal(title, message, buttonText = "Try Again") {
 
   document.getElementById("pc-warning-retry").addEventListener("click", () => {
     modal.remove();
-    startLLMCapture();
+    if (onRetry) {
+      onRetry();
+    } else {
+      startLLMCapture();
+    }
   });
 
   document.getElementById("pc-warning-cancel").addEventListener("click", () => {
+    modal.remove();
+  });
+
+  modal.querySelector(".pc-modal-overlay").addEventListener("click", (e) => {
+    if (e.target.classList.contains("pc-modal-overlay")) modal.remove();
+  });
+
+  const handleEscape = (e) => {
+    if (e.key === "Escape") {
+      modal.remove();
+      document.removeEventListener("keydown", handleEscape);
+    }
+  };
+  document.addEventListener("keydown", handleEscape);
+}
+
+function showSessionExpiredModal() {
+  const existing = document.getElementById("pc-warning-modal");
+  if (existing) existing.remove();
+
+  const modal = document.createElement("div");
+  modal.id = "pc-warning-modal";
+  const iconUrl = chrome.runtime.getURL("icon.png");
+  modal.innerHTML = `
+    <div class="pc-modal-overlay">
+      <div class="pc-warning-modal-content">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+          <img src="${iconUrl}" alt="PriceGit" style="width:32px;height:32px;">
+          <span style="font-size:18px;font-weight:700;color:#1a1a1a;">PriceGit</span>
+        </div>
+        <h2 class="pc-warning-title">Session Expired</h2>
+        <p class="pc-warning-message">Your session has expired. Please sign in again to capture prices.</p>
+        <div class="pc-warning-buttons">
+          <a href="https://pricegit.com/login" target="_blank" class="pc-warning-btn-primary" id="pc-session-signin" style="text-decoration:none;text-align:center;color:#fff;">Sign In</a>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  document.getElementById("pc-session-signin").addEventListener("click", () => {
     modal.remove();
   });
 
@@ -647,10 +711,10 @@ function generateModalHTML() {
 
             <div class="pc-form-group pc-form-col-full">
               <label>Product Link</label>
-              <div class="pc-url-display">
-                <a href="${currentUrl}" target="_blank" rel="noopener noreferrer" class="pc-url-link" title="${currentUrl}">
-                  <span class="pc-url-link-text">${displayUrl}</span>
-                  <svg class="pc-url-link-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <div class="pc-url-input-wrapper">
+                <input type="text" id="pc-product-url" value="${currentUrl}" readonly class="pc-url-readonly" autocomplete="off">
+                <a href="${currentUrl}" target="_blank" rel="noopener noreferrer" class="pc-url-open-icon" id="pc-url-open-link" title="Open link">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
                     <polyline points="15 3 21 3 21 9"></polyline>
                     <line x1="10" y1="14" x2="21" y2="3"></line>
@@ -663,31 +727,20 @@ function generateModalHTML() {
                 <span class="pc-checkbox-custom"></span>
                 <span class="pc-checkbox-text">Use a different link</span>
               </label>
-              <div class="pc-url-custom-input" id="pc-url-custom-input" style="display: none;">
-                <input type="text" id="pc-custom-url" placeholder="https://${window.location.hostname}/..." autocomplete="off">
-                <div class="pc-url-error" id="pc-url-error" style="display: none;"></div>
-              </div>
+              <div class="pc-url-error" id="pc-url-error" style="display: none;"></div>
             </div>
 
             <div class="pc-form-group pc-form-col-full">
               <label>Captured from</label>
-              <div class="pc-info-text">${location}</div>
-            </div>
-
-            <div class="pc-form-group pc-form-col-full pc-checkbox-group">
-              <label class="pc-checkbox-label">
+              <div class="pc-search-container">
+                <input type="text" id="pc-delivery-location" value="${location}" readonly class="pc-url-readonly" autocomplete="off">
+                <div id="pc-delivery-dropdown" class="pc-dropdown"></div>
+              </div>
+              <label class="pc-checkbox-label pc-checkbox-group" style="margin-top: 8px;">
                 <input type="checkbox" id="pc-different-shipping">
                 <span class="pc-checkbox-custom"></span>
                 <span class="pc-checkbox-text">Shipping address set to a different location</span>
               </label>
-            </div>
-
-            <div class="pc-form-group pc-form-col-full pc-shipping-location-group" id="pc-shipping-location-group" style="display: none;">
-              <label>Delivery Location</label>
-              <div class="pc-search-container">
-                <input type="text" id="pc-delivery-location" placeholder="Search for city..." autocomplete="off">
-                <div id="pc-delivery-dropdown" class="pc-dropdown"></div>
-              </div>
             </div>
           </div>
         </div>
@@ -737,25 +790,29 @@ function attachModalEventListeners() {
 
   // "Use a different link" checkbox
   const differentUrlCheckbox = document.getElementById("pc-different-url");
-  const urlCustomInput = document.getElementById("pc-url-custom-input");
-  const customUrlField = document.getElementById("pc-custom-url");
+  const productUrlField = document.getElementById("pc-product-url");
+  const urlOpenLink = document.getElementById("pc-url-open-link");
   const urlError = document.getElementById("pc-url-error");
 
   differentUrlCheckbox.addEventListener("change", (e) => {
     if (e.target.checked) {
-      urlCustomInput.style.display = "block";
-      customUrlField.focus();
-      selectedProductUrl = customUrlField.value.trim() || "";
+      productUrlField.removeAttribute("readonly");
+      productUrlField.classList.remove("pc-url-readonly");
+      productUrlField.focus();
+      productUrlField.select();
     } else {
-      urlCustomInput.style.display = "none";
+      productUrlField.value = window.location.href;
+      productUrlField.setAttribute("readonly", true);
+      productUrlField.classList.add("pc-url-readonly");
+      urlOpenLink.href = window.location.href;
       urlError.style.display = "none";
       selectedProductUrl = window.location.href;
     }
     validateForm();
   });
 
-  customUrlField.addEventListener("input", () => {
-    const value = customUrlField.value.trim();
+  productUrlField.addEventListener("input", () => {
+    const value = productUrlField.value.trim();
     urlError.style.display = "none";
 
     if (!value) {
@@ -782,6 +839,7 @@ function attachModalEventListeners() {
         return;
       }
       selectedProductUrl = value;
+      urlOpenLink.href = value;
     } catch {
       urlError.textContent = "Please enter a valid URL";
       urlError.style.display = "block";
@@ -794,17 +852,24 @@ function attachModalEventListeners() {
   const differentShippingCheckbox = document.getElementById(
     "pc-different-shipping",
   );
-  const shippingLocationGroup = document.getElementById(
-    "pc-shipping-location-group",
-  );
+  const deliveryLocationField = document.getElementById("pc-delivery-location");
+  const originalLocation = deliveryLocationField.value;
 
   differentShippingCheckbox.addEventListener("change", (e) => {
     if (e.target.checked) {
-      shippingLocationGroup.style.display = "block";
-    } else {
-      shippingLocationGroup.style.display = "none";
+      deliveryLocationField.value = "";
+      deliveryLocationField.removeAttribute("readonly");
+      deliveryLocationField.classList.remove("pc-url-readonly");
+      deliveryLocationField.placeholder = "Search for city...";
+      deliveryLocationField.focus();
       formData.deliveryLocation = null;
-      document.getElementById("pc-delivery-location").value = "";
+    } else {
+      deliveryLocationField.value = originalLocation;
+      deliveryLocationField.setAttribute("readonly", true);
+      deliveryLocationField.classList.add("pc-url-readonly");
+      deliveryLocationField.placeholder = "";
+      formData.deliveryLocation = null;
+      document.getElementById("pc-delivery-dropdown").style.display = "none";
     }
     validateForm();
   });

@@ -53,6 +53,13 @@
     }
   }
 
+  // Listen for session expired — clear web app auth so we stop re-syncing
+  chrome.runtime.onMessage.addListener((request) => {
+    if (request.action === "clearWebAuth") {
+      localStorage.removeItem("priceGitExtensionAuth");
+    }
+  });
+
   // Poll for auth data every 5 seconds to sync login from web app
   // This only syncs login TO extension, not logout
   setInterval(() => {

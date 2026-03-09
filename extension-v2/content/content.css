@@ -688,45 +688,33 @@
    URL CONFIRMATION
    ========================================== */
 
-.pc-url-display {
+.pc-url-input-wrapper {
   display: flex;
   align-items: center;
-  padding: 8px 10px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
+  position: relative;
 }
 
-.pc-url-link {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  text-decoration: none;
-  color: #374151;
-  min-width: 0;
-  width: 100%;
-}
-
-.pc-url-link:hover {
-  color: #2563eb;
-}
-
-.pc-url-link-text {
-  flex: 1;
-  font-size: 13px;
-  font-family: "Monaco", "Menlo", "Courier New", monospace;
-  white-space: nowrap;
-  overflow: hidden;
+.pc-url-input-wrapper input {
+  padding-right: 44px !important;
   text-overflow: ellipsis;
 }
 
-.pc-url-link-icon {
-  flex-shrink: 0;
+.pc-url-open-icon {
+  position: absolute;
+  right: 12px;
+  display: flex;
+  align-items: center;
   color: #9ca3af;
+  text-decoration: none;
 }
 
-.pc-url-link:hover .pc-url-link-icon {
+.pc-url-open-icon:hover {
   color: #2563eb;
+}
+
+.pc-url-readonly {
+  color: #111827;
+  cursor: default;
 }
 
 .pc-url-hint {

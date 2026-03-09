@@ -213,6 +213,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // Keep the message channel open for async response
   }
 
+  if (request.action === "clearWebAuth") {
+    // Clear web app auth on all pricegit.com tabs to stop re-syncing expired tokens
+    chrome.tabs.query({ url: "https://pricegit.com/*" }, (tabs) => {
+      for (const tab of tabs) {
+        chrome.tabs.sendMessage(tab.id, { action: "clearWebAuth" }).catch(() => {});
+      }
+    });
+    sendResponse({ success: true });
+    return;
+  }
+
   if (request.action === "setAuth") {
     // Store auth token and username from web app
     chrome.storage.local.set(
@@ -322,45 +333,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// Automatically refresh token every 50 minutes (tokens expire after 1 hour)
-setInterval(
-  async () => {
-    const { authToken, refreshToken } = await chrome.storage.local.get([
-      "authToken",
-      "refreshToken",
-    ]);
+// Use chrome.alarms for token refresh (survives MV3 service worker inactivity)
+chrome.alarms.create("refreshToken", { periodInMinutes: 50 });
 
-    if (authToken && refreshToken) {
-      const SUPABASE_URL = "https://gwjrsmzqjxgpuhhkpkqn.supabase.co";
-      const SUPABASE_ANON_KEY =
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3anJzbXpxanhncHVoaGtwa3FuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0NzEzMzEsImV4cCI6MjA4ODA0NzMzMX0.6oARKMJ7VChw7j1cP2VWIKJCZZ20deDAL4ymQ0E4LHA";
-
-      try {
-        const response = await fetch(
-          `${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`,
-          {
-            method: "POST",
-            headers: {
-              apikey: SUPABASE_ANON_KEY,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ refresh_token: refreshToken }),
-          },
-        );
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data?.access_token && data?.refresh_token) {
-            await chrome.storage.local.set({
-              authToken: data.access_token,
-              refreshToken: data.refresh_token,
-            });
-          }
-        }
-      } catch {
-        // Token refresh failed silently — will retry on next interval
-      }
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === "refreshToken") {
+    const { authToken } = await chrome.storage.local.get(["authToken"]);
+    if (authToken) {
+      await refreshAccessToken();
     }
-  },
-  50 * 60 * 1000,
-); // 50 minutes
+  }
+});
