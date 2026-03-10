@@ -143,6 +143,8 @@
     <div class="extension-footer">
       <a href="https://pricegit.com" target="_blank">pricegit.com</a>
       <span>·</span>
+      <a href="#" id="how-it-works-btn">How it works</a>
+      <span>·</span>
       <a href="https://pricegit.com/mission" target="_blank">Our Mission</a>
     </div>
   </div>
@@ -174,6 +176,25 @@
         <div class="modal-footer">
           <button id="cancel-location-btn" class="btn-cancel">Cancel</button>
           <button id="save-location-btn" class="btn-save" disabled>Save Location</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- How It Works Modal -->
+  <div id="hiw-modal" class="location-modal" style="display: none;">
+    <div class="modal-overlay"></div>
+    <div class="modal-content-wrapper">
+      <div class="modal-content hiw-content">
+        <button id="hiw-close-btn" class="close-modal-btn">×</button>
+        <div class="hiw-body">
+          <div class="hiw-illustration" id="hiw-illustration"></div>
+          <h3 class="hiw-title" id="hiw-title"></h3>
+          <p class="hiw-description" id="hiw-description"></p>
+          <div class="hiw-dots" id="hiw-dots"></div>
+          <div class="hiw-nav">
+            <button id="hiw-next-btn" class="btn-save">Next</button>
+          </div>
         </div>
       </div>
     </div>

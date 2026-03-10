@@ -137,7 +137,8 @@ Extract the following and return ONLY valid JSON with no additional text:
   "fees": number | null (taxes, handling fees, or other fees; use 0 if waived, null if not shown),
   "totalPrice": number | null (the FINAL/TOTAL price the customer pays),
   "currency": string (3-letter currency code like USD, EUR, GBP, ILS, JPY, etc.),
-  "productName": string (the product name/title if visible),
+  "productName": string (SHORT search name: brand + short model, max 3-4 words. e.g. "NZXT Kraken", "DJI Osmo", "Zojirushi NS". NEVER copy the page title.),
+  "productNameFull": string (CLEAN name: BRAND + FULL MODEL + PRODUCT TYPE, max ~8 words. e.g. "NZXT Kraken Plus 360 AIO Cooler", "Zojirushi NS-ZCC10 Rice Cooker". NEVER copy the raw page title. Strip all specs, features, marketing text.),
   "isFinalPrice": boolean (true if totalPrice includes all costs, false if additional costs might apply)
 }
 
@@ -149,7 +150,8 @@ Rules:
 5. All prices must be numbers (e.g., 99.99, not "$99.99")
 6. If price has cents as superscript, combine them (e.g., 99⁹⁹ = 99.99)
 7. currency must be an uppercase 3-letter ISO currency code
-8. productName should be the main product title (empty string if none visible)
+8. productName must be SHORT (max 3-4 words) — only brand + short model identifier for search autocomplete (e.g. "NZXT Kraken", "DJI Osmo", "Zojirushi NS", "iPhone 15 Pro"). Do NOT copy the page title. Do NOT include product type, specs, features, or descriptions.
+9. productNameFull must be a CLEAN human-written name (max ~8 words): BRAND + FULL MODEL NUMBER + PRODUCT TYPE (e.g. "NZXT Kraken Plus 360 AIO Cooler", "Zojirushi NS-ZCC10 Rice Cooker", "Apple iPhone 15 Pro Max Smartphone"). NEVER copy the raw page title. Strip ALL specs, feature lists, marketing text, dimensions, and dashes used as separators.
 
 Page URL: ${pageUrl || "unknown"}
 Page Title: ${pageTitle || "unknown"}`;
@@ -191,13 +193,9 @@ Page Title: ${pageTitle || "unknown"}`;
 
     const extracted = JSON.parse(result);
 
-    // Clean up product name - keep only first part before comma or descriptive words
-    let cleanProductName = extracted.productName || "";
-    if (cleanProductName) {
-      cleanProductName = cleanProductName
-        .split(/[,\-]|with|CMOS|K\/|fps|Vlog/i)[0]
-        .trim();
-    }
+    // Product names — prompt handles cleaning, just fallback if full is missing
+    const cleanProductName = (extracted.productName || "").trim();
+    const cleanProductNameFull = (extracted.productNameFull || cleanProductName).trim();
 
     // Validate and normalize the response
     const data = {
@@ -223,6 +221,7 @@ Page Title: ${pageTitle || "unknown"}`;
           ? extracted.currency.toUpperCase()
           : "USD",
       productName: cleanProductName,
+      productNameFull: cleanProductNameFull,
       isFinalPrice: Boolean(extracted.isFinalPrice),
     };
 

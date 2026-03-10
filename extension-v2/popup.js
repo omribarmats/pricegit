@@ -124,6 +124,13 @@ document.addEventListener("visibilitychange", () => {
 // Also re-check auth periodically (every 3 seconds) to catch any changes
 setInterval(initAuth, 3000);
 
+// Immediately update UI when auth is cleared from another context (e.g., content script 401)
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.authToken) {
+    initAuth();
+  }
+});
+
 searchInput.addEventListener("input", handleSearchInput);
 clearBtn.addEventListener("click", handleClear);
 editLocationBtn.addEventListener("click", openLocationModal);
@@ -896,11 +903,10 @@ async function startPriceCapture() {
     });
 
     window.close();
-  } catch (error) {
-    alert(
-      "Failed to start price capture: " +
-        error.message +
-        "\n\nMake sure you're on a product page and reload the page if needed.",
+  } catch {
+    showPopupModal(
+      "Page not ready",
+      "Please reload the page and try again. Make sure you're on a product or checkout page.",
     );
   }
 }
@@ -1011,6 +1017,7 @@ async function initAuth() {
 
 // Handle signin button
 function handleSignin() {
+  chrome.storage.session.remove("sessionCleared");
   chrome.tabs.create({
     url: "https://pricegit.com/login?source=extension",
   });
@@ -1052,6 +1059,26 @@ async function handleLogout() {
 }
 
 // Show auth required modal
+function showPopupModal(title, message) {
+  const existing = document.getElementById("popup-modal");
+  if (existing) existing.remove();
+
+  const modal = document.createElement("div");
+  modal.id = "popup-modal";
+  modal.className = "auth-modal";
+  modal.innerHTML = `
+    <div class="auth-modal-content">
+      <h2 class="auth-title">${title}</h2>
+      <p class="auth-message">${message}</p>
+      <div class="auth-buttons">
+        <button class="auth-cancel-btn" id="popup-modal-ok">OK</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById("popup-modal-ok").addEventListener("click", () => modal.remove());
+}
+
 function showAuthRequiredModal() {
   // Remove any existing auth modal
   const existing = document.getElementById("auth-modal");
@@ -1087,3 +1114,79 @@ function showAuthRequiredModal() {
     modal.remove();
   });
 }
+
+// ==========================================
+// How It Works Modal
+// ==========================================
+const hiwSlides = [
+  {
+    title: "1. Compare prices from your area",
+    description: "See real final prices (including shipping and fees) submitted by shoppers near you.",
+    illustration: "🔍",
+  },
+  {
+    title: "2. Contribute while you shop",
+    description: "Capture prices with one click and help others find better deals.",
+    illustration: "📸",
+  },
+  {
+    title: "3. Be part of the community",
+    description: "Join thousands of shoppers sharing transparent pricing on pricegit.com.",
+    illustration: "🌍",
+  },
+];
+
+let hiwCurrentSlide = 0;
+
+function openHiwModal() {
+  hiwCurrentSlide = 0;
+  renderHiwSlide();
+  document.getElementById("hiw-modal").style.display = "flex";
+}
+
+function closeHiwModal() {
+  document.getElementById("hiw-modal").style.display = "none";
+}
+
+function renderHiwSlide() {
+  const slide = hiwSlides[hiwCurrentSlide];
+  document.getElementById("hiw-illustration").textContent = slide.illustration;
+  document.getElementById("hiw-title").textContent = slide.title;
+  document.getElementById("hiw-description").textContent = slide.description;
+
+  // Render dots
+  const dotsContainer = document.getElementById("hiw-dots");
+  dotsContainer.innerHTML = "";
+  hiwSlides.forEach((_, i) => {
+    const dot = document.createElement("button");
+    dot.className = "hiw-dot" + (i === hiwCurrentSlide ? " active" : "");
+    dot.addEventListener("click", () => {
+      hiwCurrentSlide = i;
+      renderHiwSlide();
+    });
+    dotsContainer.appendChild(dot);
+  });
+
+  // Render nav button
+  const navContainer = document.querySelector(".hiw-nav");
+  const isLast = hiwCurrentSlide === hiwSlides.length - 1;
+  if (isLast) {
+    navContainer.innerHTML = `<a href="https://pricegit.com" target="_blank" class="btn-save">pricegit.com</a>`;
+  } else {
+    navContainer.innerHTML = `<button id="hiw-next-btn" class="btn-save">Next</button>`;
+    document.getElementById("hiw-next-btn").addEventListener("click", () => {
+      hiwCurrentSlide++;
+      renderHiwSlide();
+    });
+  }
+}
+
+// How it works event listeners
+document.getElementById("how-it-works-btn").addEventListener("click", (e) => {
+  e.preventDefault();
+  openHiwModal();
+});
+
+document.getElementById("hiw-close-btn").addEventListener("click", closeHiwModal);
+
+document.getElementById("hiw-modal").querySelector(".modal-overlay").addEventListener("click", closeHiwModal);

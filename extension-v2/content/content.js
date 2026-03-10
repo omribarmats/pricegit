@@ -282,7 +282,7 @@ async function analyzeScreenshotAPI() {
   return result;
 }
 
-function handleAnalysisResult(result) {
+async function handleAnalysisResult(result) {
   // Handle rate limiting
   if (result.status === 429) {
     const retryAfter = result.data?.error || "Rate limit exceeded. Please try again later.";
@@ -292,7 +292,8 @@ function handleAnalysisResult(result) {
 
   // Handle expired session
   if (result.status === 401) {
-    chrome.storage.local.remove(["authToken", "refreshToken", "username"]);
+    await chrome.storage.session.set({ sessionCleared: true });
+    await chrome.storage.local.remove(["authToken", "refreshToken", "username"]);
     chrome.runtime.sendMessage({ action: "clearWebAuth" });
     showSessionExpiredModal();
     return;
@@ -332,6 +333,7 @@ function handleAnalysisResult(result) {
       fees: extracted.fees != null ? extracted.fees : null,
       currency: extracted.currency || "USD",
       productName: extracted.productName || "",
+      productNameFull: extracted.productNameFull || extracted.productName || "",
       isFinalPrice: isFinal,
       storeName: extractStoreName(),
       location: userLocation,
@@ -349,6 +351,7 @@ function handleAnalysisResult(result) {
       fees: null,
       currency: "USD",
       productName: "",
+      productNameFull: "",
       isFinalPrice: false,
       storeName: extractStoreName(),
       location: userLocation,
@@ -948,18 +951,27 @@ function displayProductDropdown(products, query) {
   const dropdown = document.getElementById("pc-product-dropdown");
   dropdown.innerHTML = "";
 
-  if (products.length === 0) {
+  // Use the full product name for "Create new" if the query is still the LLM short suggestion
+  const createName = (formData.productNameFull && query === formData.productName)
+    ? formData.productNameFull
+    : query;
+
+  function addCreateOption() {
     const createOption = document.createElement("div");
     createOption.className = "pc-dropdown-item pc-create-new";
-    createOption.innerHTML = `Create new product: "${query}"`;
+    createOption.innerHTML = `Create new product: "${createName}"`;
     createOption.addEventListener("click", () => {
-      formData.productName = query;
+      formData.productName = createName;
       formData.productId = null;
-      document.getElementById("pc-product-name").value = query;
+      document.getElementById("pc-product-name").value = createName;
       dropdown.style.display = "none";
       validateForm();
     });
     dropdown.appendChild(createOption);
+  }
+
+  if (products.length === 0) {
+    addCreateOption();
   } else {
     products.forEach((product) => {
       const item = document.createElement("div");
@@ -975,17 +987,7 @@ function displayProductDropdown(products, query) {
       dropdown.appendChild(item);
     });
 
-    const createOption = document.createElement("div");
-    createOption.className = "pc-dropdown-item pc-create-new";
-    createOption.innerHTML = `Create new product: "${query}"`;
-    createOption.addEventListener("click", () => {
-      formData.productName = query;
-      formData.productId = null;
-      document.getElementById("pc-product-name").value = query;
-      dropdown.style.display = "none";
-      validateForm();
-    });
-    dropdown.appendChild(createOption);
+    addCreateOption();
   }
 
   dropdown.style.display = "block";
@@ -1169,14 +1171,15 @@ async function submitPrice() {
       );
     } else {
       if (result.status === 401) {
-        chrome.storage.local.remove(["authToken", "username"], () => {
-          showWarningModal(
-            "Session Expired",
-            "Your session has expired. Please sign in again in the extension popup.",
-            "OK",
-          );
-          closeModal();
-        });
+        await chrome.storage.session.set({ sessionCleared: true });
+        await chrome.storage.local.remove(["authToken", "refreshToken", "username"]);
+        chrome.runtime.sendMessage({ action: "clearWebAuth" });
+        showWarningModal(
+          "Session Expired",
+          "Your session has expired. Please sign in again in the extension popup.",
+          "OK",
+        );
+        closeModal();
       } else {
         const errorMessage =
           result.data?.error || result.error || "Unknown error";

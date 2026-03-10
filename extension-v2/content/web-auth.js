@@ -7,9 +7,17 @@
   window.priceGitAuthChecked = true;
 
   // Check for auth data in localStorage
-  function checkAndSendAuth() {
+  async function checkAndSendAuth() {
     // Skip if extension context has been invalidated (e.g., after extension reload)
     if (!chrome.runtime?.id) return;
+
+    // Skip if session was explicitly cleared (user got 401)
+    try {
+      const { sessionCleared } = await chrome.storage.session.get("sessionCleared");
+      if (sessionCleared) return;
+    } catch {
+      // Session storage not available — continue
+    }
 
     try {
       const authData = localStorage.getItem("priceGitExtensionAuth");

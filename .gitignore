@@ -28,6 +28,9 @@ coverage/
 npm-debug.log
 yarn-error.log
 
+# Documentation (internal LLM reference, not for repo)
+documentation/
+
 # Ignore SQL migration files
 **/migrations/*.sql
 migrations/*.sql
