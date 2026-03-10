@@ -153,7 +153,7 @@ export function Header() {
         <div className="flex flex-wrap items-center gap-2 sm:gap-4 md:gap-8">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 flex-shrink-0">
-            <span className="text-2xl sm:text-3xl">🪙</span>
+            <img src="/logo.png" alt="PriceGit" className="w-6 h-6 sm:w-[30px] sm:h-[30px]" />
             <span className="text-lg sm:text-2xl font-bold text-gray-900">
               PriceGit
             </span>
@@ -161,6 +161,17 @@ export function Header() {
 
           {/* Auth UI - appears on mobile before search due to flex order */}
           <div className="flex items-center gap-2 sm:gap-4 ml-auto sm:order-3">
+            {/* Chrome extension button - desktop only */}
+            <a
+              href="https://chromewebstore.google.com/detail/pricegit/ijgedommhklafmckdjjfpaklhfejandi?hl=en-US&utm_source=ext_sidebar"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden lg:flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-full hover:bg-gray-50 transition-colors"
+            >
+              <span className="text-left leading-tight">Get the PriceGit<br />Chrome extension</span>
+              <img src="/logo.png" alt="" className="w-6 h-6" />
+            </a>
+
             {/* How it works button */}
             <button
               onClick={() => setHowItWorksOpen(true)}
@@ -330,22 +341,12 @@ export function Header() {
                 )}
               </div>
             ) : (
-              <div className="flex items-center gap-1 sm:gap-2">
-                <Link
-                  href="/login"
-                  className="px-2 sm:px-4 py-2 text-xs sm:text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
-                >
-                  <span className="hidden sm:inline">Sign In</span>
-                  <span className="sm:hidden">In</span>
-                </Link>
-                <Link
-                  href="/signup"
-                  className="px-2 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
-                >
-                  <span className="hidden sm:inline">Sign Up</span>
-                  <span className="sm:hidden">Up</span>
-                </Link>
-              </div>
+              <Link
+                href="/login"
+                className="px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+              >
+                Sign in
+              </Link>
             )}
           </div>
 
