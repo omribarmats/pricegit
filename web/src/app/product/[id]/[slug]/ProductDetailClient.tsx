@@ -136,9 +136,11 @@ function groupPricesByStoreLocation(
       : history.stores?.name;
     const normalizedStoreName = storeName?.toLowerCase().trim();
     const storeId = history.store_id || "";
-    const locationSuffix = history.captured_by_city
-      ? `${history.captured_by_country}:${history.captured_by_city}`
-      : `${history.captured_by_country}`;
+    const deliveryCountry = history.delivery_country || history.captured_by_country;
+    const deliveryCity = history.delivery_city || history.captured_by_city;
+    const locationSuffix = deliveryCity
+      ? `${deliveryCountry}:${deliveryCity}`
+      : `${deliveryCountry}`;
 
     const idKey = storeId ? `id:${storeId}:${locationSuffix}` : null;
     const nameKey = normalizedStoreName
@@ -193,13 +195,15 @@ function sortPricesByRelevance(
   return prices.sort((a, b) => {
     // Assign tier based on location, fulfillment, and condition
     const getTier = (price: LatestPrice): number => {
+      const priceCountry = price.delivery_country || price.captured_by_country;
+      const priceCity = price.delivery_city || price.captured_by_city;
       const isSameCity =
         userCity &&
         userCountry &&
-        price.captured_by_city === userCity &&
-        price.captured_by_country === userCountry;
+        priceCity === userCity &&
+        priceCountry === userCountry;
       const isSameCountry =
-        userCountry && price.captured_by_country === userCountry;
+        userCountry && priceCountry === userCountry;
       const isDelivery = price.fulfillment_type === "delivery";
       const isStore = price.fulfillment_type === "store";
       const isNew = price.condition === "new";
@@ -587,8 +591,8 @@ export function ProductDetailClient({
   // Get unique countries and cities from price history
   const locationsByCountry = (filteredProduct.price_history || []).reduce(
     (acc, capture) => {
-      const country = capture.captured_by_country;
-      const city = capture.captured_by_city;
+      const country = capture.delivery_country || capture.captured_by_country;
+      const city = capture.delivery_city || capture.captured_by_city;
 
       if (!acc[country]) {
         acc[country] = new Set<string>();
@@ -609,12 +613,14 @@ export function ProductDetailClient({
     let locationMatch = selectedLocations.length === 0;
     if (!locationMatch) {
       // Check if country is selected
-      if (selectedLocations.includes(priceEntry.captured_by_country)) {
+      const entryCountry = priceEntry.delivery_country || priceEntry.captured_by_country;
+      const entryCity = priceEntry.delivery_city || priceEntry.captured_by_city;
+      if (selectedLocations.includes(entryCountry)) {
         locationMatch = true;
       }
       // Check if specific city is selected
-      else if (priceEntry.captured_by_city) {
-        const cityKey = `${priceEntry.captured_by_country}:${priceEntry.captured_by_city}`;
+      else if (entryCity) {
+        const cityKey = `${entryCountry}:${entryCity}`;
         locationMatch = selectedLocations.includes(cityKey);
       }
     }
