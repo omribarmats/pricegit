@@ -391,7 +391,7 @@ export function ProductDetailClient({
   };
 
   const handleInstallExtension = () => {
-    window.open("https://chrome.google.com/webstore", "_blank");
+    window.open("https://chromewebstore.google.com/detail/pricegit/ijgedommhklafmckdjjfpaklhfejandi", "_blank");
     setShowExtensionInstallModal(false);
   };
 

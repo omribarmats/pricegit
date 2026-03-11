@@ -182,26 +182,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Duplicate submission check — prevent same user submitting same product+store within 24h
-    if (productId) {
-      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { data: existingSubmission } = await supabaseAdmin
-        .from("price_history")
-        .select("id")
-        .eq("submitted_by", user.id)
-        .eq("product_id", productId)
-        .neq("status", "rejected")
-        .gte("created_at", twentyFourHoursAgo)
-        .limit(1);
-
-      if (existingSubmission && existingSubmission.length > 0) {
-        logApiCall("save-price", 409, Date.now() - startTime, userId, "Duplicate submission");
-        return NextResponse.json(
-          { error: "You already submitted a price for this product in the last 24 hours" },
-          { status: 409, headers: corsHeaders },
-        );
-      }
-    }
+    // Duplicate check is performed after store resolution (see below)
 
     let finalProductId = productId;
 
@@ -276,6 +257,29 @@ export async function POST(request: NextRequest) {
       }
 
       storeId = newStore.id;
+    }
+
+    // Duplicate submission check — prevent same user submitting same price from same store for same product within 24h
+    if (finalProductId) {
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: existingSubmission } = await supabaseAdmin
+        .from("price_history")
+        .select("id")
+        .eq("submitted_by", user.id)
+        .eq("product_id", finalProductId)
+        .eq("store_id", storeId)
+        .eq("price", price)
+        .neq("status", "rejected")
+        .gte("created_at", twentyFourHoursAgo)
+        .limit(1);
+
+      if (existingSubmission && existingSubmission.length > 0) {
+        logApiCall("save-price", 409, Date.now() - startTime, userId, "Duplicate submission");
+        return NextResponse.json(
+          { error: "You already submitted this price today" },
+          { status: 409, headers: corsHeaders },
+        );
+      }
     }
 
     // Save price history
