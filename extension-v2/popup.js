@@ -176,10 +176,6 @@ async function initLocation() {
     // Failed to load location from storage
   }
 
-  userLocation = {
-    country: "Israel",
-    city: "Tel Aviv",
-  };
   updateLocationDisplay();
 }
 

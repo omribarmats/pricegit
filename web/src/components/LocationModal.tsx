@@ -151,7 +151,7 @@ export function LocationModal({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => handleInputChange(e.target.value)}
-                placeholder="e.g., Tel Aviv, Israel or 123 Main St, New York"
+                placeholder="e.g., Albuquerque, New Mexico"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 autoComplete="off"
               />
