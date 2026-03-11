@@ -141,9 +141,12 @@ export default function ModeratePage() {
 
       if (error) throw error;
 
-      // Filter out user's own submissions and transform data
+      // Filter out user's own submissions (admins can review their own)
       const filteredData = data
-        ?.filter((price: any) => price.submitted_by !== currentUser?.id)
+        ?.filter(
+          (price: any) =>
+            userRole === "admin" || price.submitted_by !== currentUser?.id,
+        )
         .map((price: any) => ({
           ...price,
           products: Array.isArray(price.products)
@@ -312,8 +315,8 @@ export default function ModeratePage() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold mb-2">Review Price Submissions</h1>
           <p className="text-gray-600">
-            Help verify price submissions from the community. You cannot review
-            your own submissions.
+            Help verify price submissions from the community.
+            {userRole !== "admin" && " You cannot review your own submissions."}
           </p>
         </div>
 

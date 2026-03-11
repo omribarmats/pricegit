@@ -3,6 +3,13 @@ import { createClient } from "@supabase/supabase-js";
 import { logApiCall } from "@/lib/apiLogger";
 import { checkRateLimit } from "@/lib/serverRateLimit";
 
+// Service role client for admin operations (bypasses RLS)
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+);
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -97,8 +104,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Price not found" }, { status: 404 });
     }
 
-    // Prevent self-approval
-    if (price.submitted_by === user.id) {
+    // Check user role
+    const { data: userData } = await supabase
+      .from("users")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+
+    const userRole = userData?.role || "user";
+
+    // Prevent self-approval (admins are exempt)
+    if (price.submitted_by === user.id && userRole !== "admin") {
       return NextResponse.json(
         { error: "You cannot review your own price submission" },
         { status: 403 }
@@ -129,7 +145,7 @@ export async function POST(request: NextRequest) {
       updateData.rejection_reason = rejectionReason;
     }
 
-    const { data: updatedPrice, error: updateError } = await supabase
+    const { data: updatedPrice, error: updateError } = await supabaseAdmin
       .from("price_history")
       .update(updateData)
       .eq("id", priceId)

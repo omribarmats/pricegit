@@ -267,6 +267,15 @@ export function ProductDetailClient({
   const [revalidatingId, setRevalidatingId] = useState<string | null>(null);
   const [showExtensionInstallModal, setShowExtensionInstallModal] =
     useState(false);
+  const [toast, setToast] = useState<{
+    message: string;
+    type: "success" | "error" | "info";
+  } | null>(null);
+
+  const showToast = (message: string, type: "success" | "error" | "info") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
 
   // No filtering needed, use product directly
   const filteredProduct = product;
@@ -416,7 +425,7 @@ export function ProductDetailClient({
       } = await supabase.auth.getSession();
 
       if (!session) {
-        alert("Please log in to review prices");
+        showToast("Please log in to review prices", "error");
         return;
       }
 
@@ -436,20 +445,16 @@ export function ProductDetailClient({
 
       if (!response.ok) {
         console.error("Approval failed:", result);
-        alert(
-          result.error +
-            (result.details ? `\n${result.details}` : "") +
-            (result.code ? `\nCode: ${result.code}` : ""),
-        );
+        showToast(result.error || "Failed to approve price", "error");
         return;
       }
 
       // Remove from pending list
       setPendingPricesState((prev) => prev.filter((p) => p.id !== priceId));
-      alert("Price approved successfully!");
+      showToast("Price approved successfully!", "success");
     } catch (err) {
       console.error("Error approving price:", err);
-      alert("Failed to approve price");
+      showToast("Failed to approve price", "error");
     } finally {
       setReviewingId(null);
     }
@@ -457,7 +462,7 @@ export function ProductDetailClient({
 
   const handleReject = async (priceId: string, reason: string) => {
     if (!reason.trim()) {
-      alert("Please provide a reason for rejection");
+      showToast("Please provide a reason for rejection", "error");
       return;
     }
 
@@ -469,7 +474,7 @@ export function ProductDetailClient({
       } = await supabase.auth.getSession();
 
       if (!session) {
-        alert("Please log in to review prices");
+        showToast("Please log in to review prices", "error");
         return;
       }
 
@@ -490,21 +495,17 @@ export function ProductDetailClient({
 
       if (!response.ok) {
         console.error("Rejection failed:", result);
-        alert(
-          result.error +
-            (result.details ? `\n${result.details}` : "") +
-            (result.code ? `\nCode: ${result.code}` : ""),
-        );
+        showToast(result.error || "Failed to reject price", "error");
         return;
       }
 
       // Remove from pending list
       setPendingPricesState((prev) => prev.filter((p) => p.id !== priceId));
       setShowReviewModal(null);
-      alert("Price rejected");
+      showToast("Price rejected", "info");
     } catch (err) {
       console.error("Error rejecting price:", err);
-      alert("Failed to reject price");
+      showToast("Failed to reject price", "error");
     } finally {
       setReviewingId(null);
     }
@@ -1501,7 +1502,7 @@ export function ProductDetailClient({
                                 }
                               }}
                               disabled={reviewingId === priceEntry.id}
-                              className="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              className="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
                             >
                               Review
                             </button>
@@ -1642,6 +1643,36 @@ export function ProductDetailClient({
                 Get Extension
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 fade-in duration-300">
+          <div
+            className={`flex items-center gap-3 px-5 py-3 rounded-lg shadow-lg border ${
+              toast.type === "success"
+                ? "bg-green-50 border-green-200 text-green-800"
+                : toast.type === "error"
+                  ? "bg-red-50 border-red-200 text-red-800"
+                  : "bg-blue-50 border-blue-200 text-blue-800"
+            }`}
+          >
+            <span className="text-lg">
+              {toast.type === "success"
+                ? "\u2713"
+                : toast.type === "error"
+                  ? "\u2717"
+                  : "\u2139"}
+            </span>
+            <span className="text-sm font-medium">{toast.message}</span>
+            <button
+              onClick={() => setToast(null)}
+              className="ml-2 text-current opacity-50 hover:opacity-100 cursor-pointer"
+            >
+              {"\u00d7"}
+            </button>
           </div>
         </div>
       )}

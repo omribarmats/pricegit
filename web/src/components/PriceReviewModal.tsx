@@ -105,7 +105,7 @@ export default function PriceReviewModal({
             <h3 className="text-lg font-semibold">Review Price Submission</h3>
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+              className="text-gray-400 hover:text-gray-600 text-2xl leading-none cursor-pointer"
             >
               ×
             </button>
@@ -185,7 +185,7 @@ export default function PriceReviewModal({
                 Does the link work and show the correct product?
               </div>
               <div className="flex items-center gap-4">
-                <label className="inline-flex items-center gap-2">
+                <label className="inline-flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
                     name="link-works"
@@ -194,7 +194,7 @@ export default function PriceReviewModal({
                   />
                   Yes
                 </label>
-                <label className="inline-flex items-center gap-2">
+                <label className="inline-flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
                     name="link-works"
@@ -213,7 +213,7 @@ export default function PriceReviewModal({
                 the page?
               </div>
               <div className="flex items-center gap-4">
-                <label className="inline-flex items-center gap-2">
+                <label className="inline-flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
                     name="price-reasonable"
@@ -222,7 +222,7 @@ export default function PriceReviewModal({
                   />
                   Yes
                 </label>
-                <label className="inline-flex items-center gap-2">
+                <label className="inline-flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
                     name="price-reasonable"
@@ -240,7 +240,7 @@ export default function PriceReviewModal({
                 Does the location make sense for this store?
               </div>
               <div className="flex items-center gap-4">
-                <label className="inline-flex items-center gap-2">
+                <label className="inline-flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
                     name="location-valid"
@@ -249,7 +249,7 @@ export default function PriceReviewModal({
                   />
                   Yes
                 </label>
-                <label className="inline-flex items-center gap-2">
+                <label className="inline-flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
                     name="location-valid"
@@ -266,14 +266,14 @@ export default function PriceReviewModal({
           <div className="flex justify-end gap-3">
             <button
               onClick={onClose}
-              className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50"
+              className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 cursor-pointer"
             >
               Cancel
             </button>
             <button
               onClick={handleSubmit}
               disabled={isReviewing || !canSubmit}
-              className="px-5 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-5 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {isReviewing ? "Processing..." : "Submit"}
             </button>
