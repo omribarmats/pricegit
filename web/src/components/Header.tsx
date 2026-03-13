@@ -3,30 +3,32 @@
 import Link from "next/link";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { Product, UserLocation } from "@/types";
+import { Product } from "@/types";
 import { slugify } from "@/lib/slugify";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePathname } from "next/navigation";
 import { HowItWorksModal } from "./HowItWorksModal";
-import { LocationModal } from "./LocationModal";
-import {
-  getUserLocationFromIP,
-  getStoredLocation,
-  setStoredLocation,
-} from "@/lib/location";
+import { useLocation } from "@/contexts/LocationContext";
 
 export function Header() {
   const pathname = usePathname();
   const isProductPage = pathname?.startsWith("/product/");
   const [query, setQuery] = useState("");
-  const [suggestions, setSuggestions] = useState<Product[]>([]);
+
+  interface ProductSuggestion {
+    id: string;
+    name: string;
+    priceCount: number;
+    cityCount: number;
+  }
+
+  const [suggestions, setSuggestions] = useState<ProductSuggestion[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [howItWorksOpen, setHowItWorksOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
-  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
-  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
+  const { userLocation, setIsLocationModalOpen } = useLocation();
   const router = useRouter();
   const searchRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -36,30 +38,6 @@ export function Header() {
 
   // Username comes from userProfile in AuthContext - no need to fetch
   const username = userProfile?.username || null;
-
-  // Initialize location
-  useEffect(() => {
-    const initializeLocation = async () => {
-      const stored = getStoredLocation();
-      if (stored) {
-        setUserLocation(stored);
-        return;
-      }
-
-      const ipLocation = await getUserLocationFromIP();
-      if (ipLocation) {
-        setUserLocation(ipLocation);
-        setStoredLocation(ipLocation);
-      }
-    };
-
-    initializeLocation();
-  }, []);
-
-  const handleLocationSave = (location: UserLocation) => {
-    setUserLocation(location);
-    setStoredLocation(location);
-  };
 
   // Fetch pending prices count for review
   useEffect(() => {
@@ -96,7 +74,7 @@ export function Header() {
 
       const { data, error } = await supabase
         .from("products")
-        .select("id, name")
+        .select(`id, name, price_history(captured_by_city, status)`)
         .ilike("name", `%${query}%`)
         .limit(5);
 
@@ -106,7 +84,28 @@ export function Header() {
       }
 
       if (data) {
-        setSuggestions(data as unknown as Product[]);
+        type RawEntry = { captured_by_city: string | null; status: string };
+        type RawProduct = {
+          id: string;
+          name: string;
+          price_history: RawEntry[];
+        };
+        const enriched: ProductSuggestion[] = (data as RawProduct[]).map(
+          (p) => {
+            const approved = p.price_history.filter(
+              (ph) => ph.status === "approved",
+            );
+            return {
+              id: p.id,
+              name: p.name,
+              priceCount: approved.length,
+              cityCount: new Set(
+                approved.map((ph) => ph.captured_by_city).filter(Boolean),
+              ).size,
+            };
+          },
+        );
+        setSuggestions(enriched);
         setIsOpen(true);
       }
     };
@@ -153,7 +152,11 @@ export function Header() {
         <div className="flex flex-wrap items-center gap-2 sm:gap-4 md:gap-8">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 flex-shrink-0">
-            <img src="/logo.png" alt="PriceGit" className="w-6 h-6 sm:w-[30px] sm:h-[30px]" />
+            <img
+              src="/logo.png"
+              alt="PriceGit"
+              className="w-6 h-6 sm:w-[30px] sm:h-[30px]"
+            />
             <span className="text-lg sm:text-2xl font-bold text-gray-900">
               PriceGit
             </span>
@@ -168,7 +171,11 @@ export function Header() {
               rel="noopener noreferrer"
               className="hidden lg:flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-full hover:bg-gray-50 transition-colors"
             >
-              <span className="text-left leading-tight">Get the PriceGit<br />Chrome extension</span>
+              <span className="text-left leading-tight">
+                Get the PriceGit
+                <br />
+                Chrome extension
+              </span>
               <img src="/logo.png" alt="" className="w-6 h-6" />
             </a>
 
@@ -367,22 +374,23 @@ export function Header() {
                   {suggestions.map((product) => (
                     <button
                       key={product.id}
-                      onClick={() => handleProductClick(product)}
+                      onClick={() =>
+                        handleProductClick(product as unknown as Product)
+                      }
                       className="w-full px-4 py-3 text-left hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
                     >
                       <div className="font-medium text-gray-900">
                         {product.name}
                       </div>
-                      {product.hasAvailableStores && (
-                        <div className="text-sm text-green-600 mt-1">
-                          Available in your area
-                        </div>
-                      )}
-                      {!product.hasAvailableStores && (
-                        <div className="text-sm text-gray-500 mt-1">
-                          No local suppliers
-                        </div>
-                      )}
+                      <div className="text-sm text-gray-500 mt-1">
+                        {product.priceCount > 0
+                          ? `${product.priceCount} price${product.priceCount !== 1 ? "s" : ""}${
+                              product.cityCount > 0
+                                ? ` from ${product.cityCount} ${product.cityCount !== 1 ? "cities" : "city"}`
+                                : ""
+                            }`
+                          : "No prices yet"}
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -421,14 +429,6 @@ export function Header() {
       <HowItWorksModal
         isOpen={howItWorksOpen}
         onClose={() => setHowItWorksOpen(false)}
-      />
-
-      {/* Location Modal */}
-      <LocationModal
-        isOpen={isLocationModalOpen}
-        onClose={() => setIsLocationModalOpen(false)}
-        onSave={handleLocationSave}
-        currentLocation={userLocation}
       />
     </header>
   );

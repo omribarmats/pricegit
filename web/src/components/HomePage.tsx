@@ -2,15 +2,10 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { UserLocation, Product } from "@/types";
-import { LocationModal } from "./LocationModal";
+import { Product } from "@/types";
 import { supabase } from "@/lib/supabase";
 import { slugify } from "@/lib/slugify";
-import {
-  getUserLocationFromIP,
-  getStoredLocation,
-  setStoredLocation,
-} from "@/lib/location";
+import { useLocation } from "@/contexts/LocationContext";
 
 interface Stats {
   productCount: number;
@@ -59,9 +54,7 @@ export function HomePage({
   initialPopularProducts,
 }: HomePageProps) {
   const router = useRouter();
-  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
-  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
-  const [isLoadingLocation, setIsLoadingLocation] = useState(true);
+  const { userLocation, setIsLocationModalOpen } = useLocation();
 
   // Search state
   const [query, setQuery] = useState("");
@@ -74,28 +67,6 @@ export function HomePage({
   const stats = initialStats;
   const recentActivity = initialRecentActivity;
   const popularProducts = initialPopularProducts;
-
-  useEffect(() => {
-    const initializeLocation = async () => {
-      const stored = getStoredLocation();
-      if (stored) {
-        setUserLocation(stored);
-        setIsLoadingLocation(false);
-        return;
-      }
-
-      const ipLocation = await getUserLocationFromIP();
-      if (ipLocation) {
-        setUserLocation(ipLocation);
-        setStoredLocation(ipLocation);
-      } else {
-        setIsLocationModalOpen(true);
-      }
-      setIsLoadingLocation(false);
-    };
-
-    initializeLocation();
-  }, []);
 
   // Search products
   useEffect(() => {
@@ -150,25 +121,12 @@ export function HomePage({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const handleLocationSave = (location: UserLocation) => {
-    setUserLocation(location);
-    setStoredLocation(location);
-  };
-
   const handleProductClick = (product: Product | PopularProduct) => {
     setQuery("");
     setSuggestions([]);
     setIsOpen(false);
     router.push(`/product/${product.id}/${slugify(product.name)}`);
   };
-
-  if (isLoadingLocation) {
-    return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <div className="text-gray-500">Detecting your location...</div>
-      </div>
-    );
-  }
 
   return (
     <div className="bg-white">
@@ -359,14 +317,6 @@ export function HomePage({
           </div>
         )}
       </main>
-
-      {/* Location Modal */}
-      <LocationModal
-        isOpen={isLocationModalOpen}
-        onClose={() => setIsLocationModalOpen(false)}
-        onSave={handleLocationSave}
-        currentLocation={userLocation}
-      />
     </div>
   );
 }

@@ -152,10 +152,12 @@ body {
   width: 260px;
   z-index: 100;
   pointer-events: none;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   opacity: 0;
   transform: translateY(4px);
-  transition: opacity 0.6s ease, transform 0.6s ease;
+  transition:
+    opacity 0.6s ease,
+    transform 0.6s ease;
 }
 
 .capture-price-btn:hover::after {
@@ -479,6 +481,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 10px 16px;
   background: white;
@@ -494,36 +497,59 @@ body {
   border-bottom: none;
 }
 
-/* Left side: Dot + Price + Store */
+/* Left side: Info icon + Price + Store + Link icon */
 .price-left {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: 14px;
   color: #111827;
   text-decoration: none;
   white-space: nowrap;
-  transition: color 0.15s;
 }
 
-a.price-left:hover {
+/* ⓘ info button */
+.price-info-btn {
+  background: none;
+  border: none;
+  padding: 5px;
+  cursor: pointer;
+  color: #60a5fa;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-radius: 50%;
+  transition: color 0.15s;
+  vertical-align: middle;
+}
+
+.price-info-btn:hover {
   color: #2563eb;
 }
 
-.price-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
+.price-info-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* Main link: price + store + arrow */
+.price-main-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.price-main-link:hover {
+  color: #2563eb;
+}
+
+.price-link-svg {
+  width: 11px;
+  height: 11px;
   flex-shrink: 0;
-  box-shadow: 0 0 0 1px #d1d5db;
-}
-
-.price-dot-final {
-  background-color: #10b981;
-}
-
-.price-dot-partial {
-  background-color: #f59e0b;
 }
 
 .price-amount {
@@ -542,6 +568,41 @@ a.price-left:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Price breakdown panel (hidden by default, shown on hover/click of ⓘ) */
+.price-breakdown-panel {
+  display: none;
+  flex-basis: 100%;
+  margin-top: 2px;
+  padding: 8px 10px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.price-breakdown-panel.visible {
+  display: block;
+}
+
+.bd-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  color: #6b7280;
+}
+
+.bd-row:last-child {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid #e5e7eb;
+  color: #111827;
+  font-weight: 600;
+}
+
+.bd-unknown {
+  color: #d1d5db;
 }
 
 /* No Results States */

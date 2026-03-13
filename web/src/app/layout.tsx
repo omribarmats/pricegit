@@ -5,6 +5,7 @@ import { Analytics } from "@vercel/analytics/react";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { LocationProvider } from "@/contexts/LocationContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -49,10 +50,12 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <AuthProvider>
-          <Header />
-          {children}
-          <Footer />
-          <Analytics />
+          <LocationProvider>
+            <Header />
+            {children}
+            <Footer />
+            <Analytics />
+          </LocationProvider>
         </AuthProvider>
       </body>
     </html>

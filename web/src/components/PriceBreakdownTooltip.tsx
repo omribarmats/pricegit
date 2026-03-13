@@ -41,26 +41,35 @@ export default function PriceBreakdownTooltip({
     }
   }, [showTooltip]);
 
-  // Close tooltip on scroll
+  // Close tooltip on scroll or outside click
   useEffect(() => {
     if (showTooltip) {
       const handleScroll = () => setShowTooltip(false);
+      const handleClickOutside = (e: MouseEvent) => {
+        if (
+          triggerRef.current &&
+          !triggerRef.current.contains(e.target as Node)
+        ) {
+          setShowTooltip(false);
+        }
+      };
       window.addEventListener("scroll", handleScroll, true);
-      return () => window.removeEventListener("scroll", handleScroll, true);
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => {
+        window.removeEventListener("scroll", handleScroll, true);
+        document.removeEventListener("mousedown", handleClickOutside);
+      };
     }
   }, [showTooltip]);
-
-  if (!hasBreakdown) {
-    return <>{children}</>;
-  }
 
   return (
     <>
       <div
         ref={triggerRef}
-        className="relative inline-block"
+        className="relative inline-flex items-center"
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
+        onClick={() => setShowTooltip((prev) => !prev)}
       >
         {children}
       </div>

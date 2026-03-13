@@ -39,6 +39,9 @@ export function getStoredLocation(): UserLocation | null {
 export function setStoredLocation(location: UserLocation): void {
   if (typeof window === "undefined") return;
   localStorage.setItem("userLocation", JSON.stringify(location));
+  window.dispatchEvent(
+    new CustomEvent("locationchanged", { detail: location }),
+  );
 }
 
 export function clearStoredLocation(): void {

@@ -66,13 +66,13 @@ const slides: Slide[] = [
   {
     title: "3. Find Best Prices for You",
     description:
-      "Browse verified prices relevant to your location. Compare prices across stores, see price history, and find the best deal available.",
+      "Browse verified prices relevant to your location. Compare prices across stores, and see price history.",
     illustration: <SearchPriceIcon />,
   },
   {
-    title: "4. Help Verify Prices",
+    title: "4. Share Prices Yourself!",
     description:
-      "Become a price verifier. Use the browser extension to submit prices from stores and help others discover better alternatives.",
+      "Join the community. Use the browser extension to submit prices from stores and help others discover better alternatives.",
     illustration: <HandshakeIcon />,
   },
 ];

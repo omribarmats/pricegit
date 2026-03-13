@@ -378,12 +378,10 @@ function displayAlternatives(alternatives) {
     const currency = alt.currency || "USD";
     const storeName = alt.store_name || "Unknown Store";
     const isFinal = alt.is_final_price !== false;
-    const dotClass = isFinal ? "price-dot-final" : "price-dot-partial";
 
     // Format price display
-    const priceDisplay = `${getCurrencySymbol(currency)}${parseFloat(
-      total,
-    ).toFixed(2)}`;
+    const currencySymbol = getCurrencySymbol(currency);
+    const priceDisplay = `${currencySymbol}${parseFloat(total).toFixed(2)}`;
 
     // Build location + time + username meta
     const location = alt.captured_by_city
@@ -397,21 +395,55 @@ function displayAlternatives(alternatives) {
     if (username) metaParts.push(escapeHtml(username));
     const metaText = metaParts.join(" • ");
 
-    // Build left side content (dot + price + @ store)
-    const leftContent = `<span class="price-dot ${dotClass}"></span><span class="price-amount">${priceDisplay}</span><span class="price-store">@ ${escapeHtml(storeName)}</span>`;
+    // Info icon SVG
+    const infoIconSvg = `<svg viewBox="0 0 20 20" fill="currentColor" class="price-info-icon"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" /></svg>`;
 
-    // Create the row HTML
-    if (alt.source_url) {
-      row.innerHTML = `
-        <a href="${alt.source_url}" target="_blank" rel="noopener noreferrer" class="price-left">${leftContent}</a>
-        <div class="price-meta">${metaText}</div>
-      `;
-    } else {
-      row.innerHTML = `
-        <div class="price-left">${leftContent}</div>
-        <div class="price-meta">${metaText}</div>
-      `;
-    }
+    // Arrow icon (inline in the link)
+    const arrowSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="price-link-svg"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>`;
+
+    // Price + store + arrow — wrapped in a link if source_url exists
+    const priceContent = alt.source_url
+      ? `<a href="${alt.source_url}" target="_blank" rel="noopener noreferrer" class="price-main-link"><span class="price-amount">${priceDisplay}</span> <span class="price-store">@ ${escapeHtml(storeName)}</span> ${arrowSvg}</a>`
+      : `<span><span class="price-amount">${priceDisplay}</span> <span class="price-store">@ ${escapeHtml(storeName)}</span></span>`;
+
+    // Price breakdown panel — always rendered
+    const fmtOrQ = (val) =>
+      val != null
+        ? `${currencySymbol}${parseFloat(val).toFixed(2)}`
+        : `<span class="bd-unknown">?</span>`;
+    const breakdownHtml = `<div class="price-breakdown-panel">
+        <div class="bd-row"><span>base price</span><span>${fmtOrQ(alt.base_price)}</span></div>
+        <div class="bd-row"><span>shipping</span><span>${fmtOrQ(alt.shipping_cost)}</span></div>
+        <div class="bd-row"><span>fees</span><span>${fmtOrQ(alt.fees)}</span></div>
+        <div class="bd-row bd-total"><span>total</span><span>${isFinal ? priceDisplay : `<span class="bd-unknown">?</span>`}</span></div>
+      </div>`;
+
+    // Build row HTML
+    row.innerHTML = `
+      <div class="price-left">
+        <button class="price-info-btn" type="button" aria-label="Price breakdown">${infoIconSvg}</button>
+        ${priceContent}
+      </div>
+      <div class="price-meta">${metaText}</div>
+      ${breakdownHtml}
+    `;
+
+    // Always attach breakdown events
+    const infoBtn = row.querySelector(".price-info-btn");
+    const panel = row.querySelector(".price-breakdown-panel");
+
+    // Desktop: hover on the button
+    infoBtn.addEventListener("mouseenter", () =>
+      panel.classList.add("visible"),
+    );
+    infoBtn.addEventListener("mouseleave", () =>
+      panel.classList.remove("visible"),
+    );
+    // Click toggle (mobile + desktop)
+    infoBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      panel.classList.toggle("visible");
+    });
 
     alternativesList.appendChild(row);
   });
@@ -1072,7 +1104,9 @@ function showPopupModal(title, message) {
     </div>
   `;
   document.body.appendChild(modal);
-  document.getElementById("popup-modal-ok").addEventListener("click", () => modal.remove());
+  document
+    .getElementById("popup-modal-ok")
+    .addEventListener("click", () => modal.remove());
 }
 
 function showAuthRequiredModal() {
@@ -1117,17 +1151,20 @@ function showAuthRequiredModal() {
 const hiwSlides = [
   {
     title: "1. Compare prices from your area",
-    description: "See real final prices (including shipping and fees) submitted by shoppers near you.",
+    description:
+      "See real final prices (including shipping and fees) submitted by shoppers near you.",
     illustration: "🔍",
   },
   {
     title: "2. Contribute while you shop",
-    description: "Capture prices with one click and help others find better deals.",
+    description:
+      "Capture prices with one click and help others find better deals.",
     illustration: "📸",
   },
   {
     title: "3. Be part of the community",
-    description: "Join thousands of shoppers sharing transparent pricing on pricegit.com.",
+    description:
+      "Join thousands of shoppers sharing transparent pricing on pricegit.com.",
     illustration: "🌍",
   },
 ];
@@ -1183,6 +1220,11 @@ document.getElementById("how-it-works-btn").addEventListener("click", (e) => {
   openHiwModal();
 });
 
-document.getElementById("hiw-close-btn").addEventListener("click", closeHiwModal);
+document
+  .getElementById("hiw-close-btn")
+  .addEventListener("click", closeHiwModal);
 
-document.getElementById("hiw-modal").querySelector(".modal-overlay").addEventListener("click", closeHiwModal);
+document
+  .getElementById("hiw-modal")
+  .querySelector(".modal-overlay")
+  .addEventListener("click", closeHiwModal);

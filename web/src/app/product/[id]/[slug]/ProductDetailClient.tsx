@@ -1,19 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Product, UserLocation } from "@/types";
-import { LocationModal } from "@/components/LocationModal";
+import { Product } from "@/types";
 import PriceBreakdownTooltip from "@/components/PriceBreakdownTooltip";
 import PriceReviewModal from "@/components/PriceReviewModal";
 import { canStoreServeUser } from "@/lib/storeFilters";
-import {
-  getUserLocationFromIP,
-  getStoredLocation,
-  setStoredLocation,
-} from "@/lib/location";
 import { getCurrencySymbol } from "@/lib/currency";
 import { calculateDistance } from "@/lib/distance";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLocation } from "@/contexts/LocationContext";
 import { supabase } from "@/lib/supabase";
 import {
   checkExtensionInstalled,
@@ -136,7 +131,8 @@ function groupPricesByStoreLocation(
       : history.stores?.name;
     const normalizedStoreName = storeName?.toLowerCase().trim();
     const storeId = history.store_id || "";
-    const deliveryCountry = history.delivery_country || history.captured_by_country;
+    const deliveryCountry =
+      history.delivery_country || history.captured_by_country;
     const deliveryCity = history.delivery_city || history.captured_by_city;
     const locationSuffix = deliveryCity
       ? `${deliveryCountry}:${deliveryCity}`
@@ -202,8 +198,7 @@ function sortPricesByRelevance(
         userCountry &&
         priceCity === userCity &&
         priceCountry === userCountry;
-      const isSameCountry =
-        userCountry && priceCountry === userCountry;
+      const isSameCountry = userCountry && priceCountry === userCountry;
       const isDelivery = price.fulfillment_type === "delivery";
       const isStore = price.fulfillment_type === "store";
       const isNew = price.condition === "new";
@@ -250,9 +245,7 @@ export function ProductDetailClient({
   currentUserId,
 }: ProductDetailClientProps) {
   const { user, userProfile } = useAuth();
-  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
-  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
-  const [isLoadingLocation, setIsLoadingLocation] = useState(true);
+  const { userLocation, setIsLocationModalOpen } = useLocation();
   const [isStarred, setIsStarred] = useState(false);
   const [isStarring, setIsStarring] = useState(false);
   const [activeTab, setActiveTab] = useState<"prices" | "pending">("prices");
@@ -348,28 +341,6 @@ export function ProductDetailClient({
     fetchPendingPrices();
   }, [product.id, user]);
 
-  useEffect(() => {
-    const initializeLocation = async () => {
-      const stored = getStoredLocation();
-      if (stored) {
-        setUserLocation(stored);
-        setIsLoadingLocation(false);
-        return;
-      }
-
-      const ipLocation = await getUserLocationFromIP();
-      if (ipLocation) {
-        setUserLocation(ipLocation);
-        setStoredLocation(ipLocation);
-      } else {
-        setIsLocationModalOpen(true);
-      }
-      setIsLoadingLocation(false);
-    };
-
-    initializeLocation();
-  }, []);
-
   // Check if extension is installed
   useEffect(() => {
     checkExtensionInstalled().then(setExtensionInstalled);
@@ -395,7 +366,10 @@ export function ProductDetailClient({
   };
 
   const handleInstallExtension = () => {
-    window.open("https://chromewebstore.google.com/detail/pricegit/ijgedommhklafmckdjjfpaklhfejandi", "_blank");
+    window.open(
+      "https://chromewebstore.google.com/detail/pricegit/ijgedommhklafmckdjjfpaklhfejandi",
+      "_blank",
+    );
     setShowExtensionInstallModal(false);
   };
 
@@ -565,19 +539,6 @@ export function ProductDetailClient({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const handleLocationSave = (location: UserLocation) => {
-    setUserLocation(location);
-    setStoredLocation(location);
-  };
-
-  if (isLoadingLocation) {
-    return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <div className="text-gray-500">Detecting your location...</div>
-      </div>
-    );
-  }
-
   // Separate approved and pending prices
   const approvedPrices = (filteredProduct.price_history || []).filter(
     (price) => price.status === "approved",
@@ -587,6 +548,11 @@ export function ProductDetailClient({
 
   const allGroups = groupPricesByStoreLocation(approvedPrices);
   const latestPrices = allGroups.map((group) => group.latest);
+  const approvedCityCount = new Set(
+    approvedPrices
+      .map((p) => p.delivery_city || p.captured_by_city)
+      .filter(Boolean),
+  ).size;
 
   // Get unique countries and cities from price history
   const locationsByCountry = (filteredProduct.price_history || []).reduce(
@@ -613,7 +579,8 @@ export function ProductDetailClient({
     let locationMatch = selectedLocations.length === 0;
     if (!locationMatch) {
       // Check if country is selected
-      const entryCountry = priceEntry.delivery_country || priceEntry.captured_by_country;
+      const entryCountry =
+        priceEntry.delivery_country || priceEntry.captured_by_country;
       const entryCity = priceEntry.delivery_city || priceEntry.captured_by_city;
       if (selectedLocations.includes(entryCountry)) {
         locationMatch = true;
@@ -633,9 +600,9 @@ export function ProductDetailClient({
     return locationMatch && fulfillmentMatch;
   });
 
-  // Determine user's location for sorting (priority: userProfile > userLocation)
-  const sortCountry = userProfile?.country || userLocation?.country || null;
-  const sortCity = userProfile?.city || userLocation?.city || null;
+  // Determine user's location for sorting (priority: userLocation > userProfile)
+  const sortCountry = userLocation?.country || userProfile?.country || null;
+  const sortCity = userLocation?.city || userProfile?.city || null;
 
   // Sort prices by relevance to user
   const filteredGroups = groupPricesByStoreLocation(filteredApprovedPrices);
@@ -700,11 +667,13 @@ export function ProductDetailClient({
       {/* Sub-navigation tabs */}
       <div className="bg-[#F5EDF5]/20 border-b border-gray-200">
         <div className="max-w-6xl mx-auto px-6">
-          <div className="flex gap-8">
-            <span className="py-3 text-xs text-gray-900">{product.name}</span>
+          <div className="flex gap-4 sm:gap-8 overflow-x-auto">
+            <span className="py-3 text-xs text-gray-900 truncate max-w-[120px] sm:max-w-none whitespace-nowrap">
+              {product.name}
+            </span>
             <button
               onClick={() => setActiveTab("prices")}
-              className={`py-3 text-xs text-gray-900 hover:text-gray-700 transition-colors cursor-pointer ${
+              className={`py-3 text-xs text-gray-900 hover:text-gray-700 transition-colors cursor-pointer whitespace-nowrap ${
                 activeTab === "prices"
                   ? "border-b-2 border-blue-600"
                   : "border-b-2 border-transparent"
@@ -714,13 +683,13 @@ export function ProductDetailClient({
             </button>
             <button
               onClick={() => setActiveTab("pending")}
-              className={`py-3 text-xs text-gray-900 hover:text-gray-700 transition-colors cursor-pointer ${
+              className={`py-3 text-xs text-gray-900 hover:text-gray-700 transition-colors cursor-pointer whitespace-nowrap ${
                 activeTab === "pending"
                   ? "border-b-2 border-blue-600"
                   : "border-b-2 border-transparent"
               }`}
             >
-              Pending verification ({pendingPrices.length})
+              Pending ({pendingPrices.length})
             </button>
           </div>
         </div>
@@ -734,11 +703,33 @@ export function ProductDetailClient({
                 {product.name}
               </h1>
               {activeTab === "prices" && (
-                <p className="text-sm text-gray-600 mt-2">
-                  Showing {allGroups.length}{" "}
-                  {allGroups.length === 1 ? "price" : "prices"} from around the
-                  world
-                </p>
+                <>
+                  <p className="text-sm text-gray-600 mt-2">
+                    Showing {allGroups.length}{" "}
+                    {allGroups.length === 1 ? "price" : "prices"}
+                    {approvedCityCount > 0 && (
+                      <>
+                        {" "}
+                        from {approvedCityCount}{" "}
+                        {approvedCityCount === 1 ? "city" : "cities"}
+                      </>
+                    )}
+                  </p>
+                  {(userLocation?.city || userLocation?.country) && (
+                    <p className="text-sm text-gray-500 mt-1">
+                      We have your location as{" "}
+                      {[userLocation.city, userLocation.country]
+                        .filter(Boolean)
+                        .join(", ")}{" "}
+                      <button
+                        onClick={() => setIsLocationModalOpen(true)}
+                        className="text-blue-600 hover:text-blue-700 underline cursor-pointer"
+                      >
+                        Edit
+                      </button>
+                    </p>
+                  )}
+                </>
               )}
             </div>
             <button
@@ -1081,8 +1072,11 @@ export function ProductDetailClient({
                     : "bg-amber-400";
 
                   // Format location — prefer delivery location when set
-                  const locCity = priceEntry.delivery_city || priceEntry.captured_by_city;
-                  const locCountry = priceEntry.delivery_country || priceEntry.captured_by_country;
+                  const locCity =
+                    priceEntry.delivery_city || priceEntry.captured_by_city;
+                  const locCountry =
+                    priceEntry.delivery_country ||
+                    priceEntry.captured_by_country;
                   const location = locCity
                     ? `${locCity}, ${locCountry}`
                     : locCountry;
@@ -1090,70 +1084,71 @@ export function ProductDetailClient({
                   return (
                     <div key={group.key} className="bg-white">
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 px-4 py-3 hover:bg-gray-50">
-                        {/* Left side: Price, Store, Fulfillment, Price Type */}
+                        {/* Left side: Info icon, Price, Store, Link, History count */}
                         <div className="flex items-center gap-2 text-sm text-gray-900">
+                          <PriceBreakdownTooltip
+                            price={priceEntry.price}
+                            basePrice={priceEntry.base_price}
+                            shippingCost={priceEntry.shipping_cost}
+                            fees={priceEntry.fees}
+                            currency={priceEntry.currency || "USD"}
+                            isFinalPrice={priceEntry.is_final_price}
+                          >
+                            <button
+                              type="button"
+                              className="text-blue-400 hover:text-blue-600 flex-shrink-0 focus:outline-none p-1.5 rounded-full"
+                              aria-label={priceStatusLabel}
+                            >
+                              <svg
+                                className="h-3.5 w-3.5"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                              >
+                                <path
+                                  fillRule="evenodd"
+                                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                                  clipRule="evenodd"
+                                />
+                              </svg>
+                            </button>
+                          </PriceBreakdownTooltip>
                           {priceEntry.source_url ? (
                             <a
                               href={priceEntry.source_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="hover:text-blue-600"
+                              className="inline-flex items-center gap-1.5 hover:text-blue-600"
                             >
-                              <PriceBreakdownTooltip
+                              <PriceDisplay
                                 price={priceEntry.price}
-                                basePrice={priceEntry.base_price}
-                                shippingCost={priceEntry.shipping_cost}
-                                fees={priceEntry.fees}
                                 currency={priceEntry.currency || "USD"}
-                                isFinalPrice={priceEntry.is_final_price}
+                              />
+                              {" @ "}
+                              {storeName || priceEntry.source}
+                              <svg
+                                className="h-3 w-3"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
                               >
-                                <span className="inline-flex items-center gap-2">
-                                  <span
-                                    className={`h-2.5 w-2.5 rounded-full ${priceStatusClass} ring-1 ring-gray-300`}
-                                    role="img"
-                                    aria-label={priceStatusLabel}
-                                    title={priceStatusLabel}
-                                  />
-                                  <PriceDisplay
-                                    price={priceEntry.price}
-                                    currency={priceEntry.currency || "USD"}
-                                  />
-                                  {" @ "}
-                                  {storeName || priceEntry.source}
-                                </span>
-                              </PriceBreakdownTooltip>
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                                />
+                              </svg>
                             </a>
                           ) : (
-                            <span>
-                              <PriceBreakdownTooltip
+                            <span className="inline-flex items-center gap-1.5">
+                              <PriceDisplay
                                 price={priceEntry.price}
-                                basePrice={priceEntry.base_price}
-                                shippingCost={priceEntry.shipping_cost}
-                                fees={priceEntry.fees}
                                 currency={priceEntry.currency || "USD"}
-                                isFinalPrice={priceEntry.is_final_price}
-                              >
-                                <span className="inline-flex items-center gap-2">
-                                  <span
-                                    className={`h-2.5 w-2.5 rounded-full ${priceStatusClass} ring-1 ring-gray-300`}
-                                    role="img"
-                                    aria-label={priceStatusLabel}
-                                    title={priceStatusLabel}
-                                  />
-                                  <PriceDisplay
-                                    price={priceEntry.price}
-                                    currency={priceEntry.currency || "USD"}
-                                  />
-                                  {" @ "}
-                                  {storeName || priceEntry.source}
-                                </span>
-                              </PriceBreakdownTooltip>
+                              />
+                              {" @ "}
+                              {storeName || priceEntry.source}
                             </span>
                           )}
-                        </div>
-
-                        {/* Right side: Location, Time, Username (gray) + Screenshot + Recapture */}
-                        <div className="flex items-center gap-3 text-sm text-gray-500 sm:text-right">
                           {olderCount > 0 && (
                             <button
                               onClick={(event) => {
@@ -1161,34 +1156,16 @@ export function ProductDetailClient({
                                 event.stopPropagation();
                                 toggleGroupExpanded(group.key);
                               }}
-                              className="text-xs text-gray-500 hover:text-gray-700 hover:border-gray-400 inline-flex items-center gap-1 border border-gray-300 rounded px-1.5 py-0.5 transition-colors flex-shrink-0"
+                              title="View price history"
+                              className="cursor-pointer text-xs text-gray-500 hover:text-gray-700 hover:border-gray-400 inline-flex items-center border border-gray-300 rounded px-1.5 py-0.5 transition-colors flex-shrink-0"
                             >
-                              <span>{olderCount}</span>
-                              <span aria-hidden="true" className="inline-flex">
-                                {isExpanded ? (
-                                  <svg
-                                    viewBox="0 0 20 20"
-                                    className="h-3 w-3"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                  >
-                                    <path d="M6 12l4-4 4 4" />
-                                  </svg>
-                                ) : (
-                                  <svg
-                                    viewBox="0 0 20 20"
-                                    className="h-3 w-3"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                  >
-                                    <path d="M6 8l4 4 4-4" />
-                                  </svg>
-                                )}
-                              </span>
+                              {olderCount}
                             </button>
                           )}
+                        </div>
+
+                        {/* Right side: Location, Time, Username (gray) */}
+                        <div className="flex items-center gap-3 text-sm text-gray-500 sm:text-right">
                           <div className="flex-1">
                             {location} • {formatTimeAgo(priceEntry.created_at)}
                             {priceEntry.submitted_by_username && (
@@ -1215,58 +1192,15 @@ export function ProductDetailClient({
                                 </>
                               )}
                           </div>
-                          {/* Recapture Button - moved to the right */}
-                          {priceEntry.source_url && (
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleRecapture(
-                                  priceEntry.source_url,
-                                  priceEntry.id,
-                                );
-                              }}
-                              disabled={revalidatingId === priceEntry.id}
-                              className="px-1.5 py-0.5 text-[10px] bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex-shrink-0 inline-flex items-center gap-1"
-                              title="Recapture this price with extension"
-                            >
-                              <span>
-                                {revalidatingId === priceEntry.id
-                                  ? "..."
-                                  : "Recapture"}
-                              </span>
-                              {!revalidatingId && (
-                                <svg
-                                  className="w-2.5 h-2.5"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                                  />
-                                </svg>
-                              )}
-                            </button>
-                          )}
                         </div>
                       </div>
                       {olderCount > 0 && isExpanded && (
                         <div className="px-4 pb-3 pl-8 text-xs text-gray-500">
                           <div className="mt-1 space-y-2">
                             {olderEntries.map((entry) => {
-                              const entryStoreName = Array.isArray(entry.stores)
-                                ? entry.stores[0]?.name
-                                : entry.stores?.name;
                               const entryStatusLabel = entry.is_final_price
                                 ? "Final price"
                                 : "Partial price";
-                              const entryStatusClass = entry.is_final_price
-                                ? "bg-emerald-500"
-                                : "bg-amber-400";
 
                               return (
                                 <div
@@ -1274,62 +1208,36 @@ export function ProductDetailClient({
                                   className="flex items-center justify-between gap-3"
                                 >
                                   <div className="flex items-center gap-2 text-gray-700">
-                                    {entry.source_url ? (
-                                      <a
-                                        href={entry.source_url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="hover:text-blue-600"
+                                    <PriceBreakdownTooltip
+                                      price={entry.price}
+                                      basePrice={entry.base_price}
+                                      shippingCost={entry.shipping_cost}
+                                      fees={entry.fees}
+                                      currency={entry.currency || "USD"}
+                                      isFinalPrice={entry.is_final_price}
+                                    >
+                                      <button
+                                        type="button"
+                                        className="text-blue-400 hover:text-blue-600 flex-shrink-0 focus:outline-none p-1.5 rounded-full"
+                                        aria-label={entryStatusLabel}
                                       >
-                                        <PriceBreakdownTooltip
-                                          price={entry.price}
-                                          basePrice={entry.base_price}
-                                          shippingCost={entry.shipping_cost}
-                                          fees={entry.fees}
-                                          currency={entry.currency || "USD"}
-                                          isFinalPrice={entry.is_final_price}
+                                        <svg
+                                          className="h-3 w-3"
+                                          viewBox="0 0 20 20"
+                                          fill="currentColor"
                                         >
-                                          <span className="inline-flex items-center gap-2">
-                                            <span
-                                              className={`h-2 w-2 rounded-full ${entryStatusClass} ring-1 ring-gray-300`}
-                                              role="img"
-                                              aria-label={entryStatusLabel}
-                                              title={entryStatusLabel}
-                                            />
-                                            <PriceDisplay
-                                              price={entry.price}
-                                              currency={entry.currency || "USD"}
-                                            />
-                                            {" @ "}
-                                            {entryStoreName || entry.source}
-                                          </span>
-                                        </PriceBreakdownTooltip>
-                                      </a>
-                                    ) : (
-                                      <PriceBreakdownTooltip
-                                        price={entry.price}
-                                        basePrice={entry.base_price}
-                                        shippingCost={entry.shipping_cost}
-                                        fees={entry.fees}
-                                        currency={entry.currency || "USD"}
-                                        isFinalPrice={entry.is_final_price}
-                                      >
-                                        <span className="inline-flex items-center gap-2">
-                                          <span
-                                            className={`h-2 w-2 rounded-full ${entryStatusClass} ring-1 ring-gray-300`}
-                                            role="img"
-                                            aria-label={entryStatusLabel}
-                                            title={entryStatusLabel}
+                                          <path
+                                            fillRule="evenodd"
+                                            d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                                            clipRule="evenodd"
                                           />
-                                          <PriceDisplay
-                                            price={entry.price}
-                                            currency={entry.currency || "USD"}
-                                          />
-                                          {" @ "}
-                                          {entryStoreName || entry.source}
-                                        </span>
-                                      </PriceBreakdownTooltip>
-                                    )}
+                                        </svg>
+                                      </button>
+                                    </PriceBreakdownTooltip>
+                                    <PriceDisplay
+                                      price={entry.price}
+                                      currency={entry.currency || "USD"}
+                                    />
                                   </div>
                                   <div className="text-gray-400 flex-shrink-0">
                                     {formatTimeAgo(entry.created_at)}
@@ -1361,7 +1269,7 @@ export function ProductDetailClient({
             <div className="border border-gray-200 rounded-lg overflow-hidden">
               {/* Header */}
               <div className="bg-yellow-50 px-4 py-3 text-sm font-medium text-gray-700">
-                Pending verification ({pendingPrices.length})
+                Pending ({pendingPrices.length})
               </div>
 
               {/* Pending Price List */}
@@ -1398,8 +1306,11 @@ export function ProductDetailClient({
                       : "bg-amber-400";
 
                     // Format location — prefer delivery location when set
-                    const locCity = priceEntry.delivery_city || priceEntry.captured_by_city;
-                    const locCountry = priceEntry.delivery_country || priceEntry.captured_by_country;
+                    const locCity =
+                      priceEntry.delivery_city || priceEntry.captured_by_city;
+                    const locCountry =
+                      priceEntry.delivery_country ||
+                      priceEntry.captured_by_country;
                     const location = locCity
                       ? `${locCity}, ${locCountry}`
                       : locCountry;
@@ -1416,66 +1327,73 @@ export function ProductDetailClient({
                         className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0 px-4 py-3 bg-yellow-50/30 hover:bg-yellow-50"
                       >
                         {/* Screenshot Thumbnail */}
-                        {/* Left side: Price, Store, Fulfillment, Price Type */}
+                        {/* Left side: Info icon, Price, Store, Link */}
                         <div className="text-sm text-gray-900">
-                          {priceEntry.source_url ? (
-                            <a
-                              href={priceEntry.source_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="hover:text-blue-600"
+                          <div className="inline-flex items-center gap-2">
+                            <PriceBreakdownTooltip
+                              price={priceEntry.price}
+                              basePrice={priceEntry.base_price}
+                              shippingCost={priceEntry.shipping_cost}
+                              fees={priceEntry.fees}
+                              currency={priceEntry.currency || "USD"}
+                              isFinalPrice={priceEntry.is_final_price}
                             >
-                              <PriceBreakdownTooltip
-                                price={priceEntry.price}
-                                basePrice={priceEntry.base_price}
-                                shippingCost={priceEntry.shipping_cost}
-                                fees={priceEntry.fees}
-                                currency={priceEntry.currency || "USD"}
-                                isFinalPrice={priceEntry.is_final_price}
+                              <button
+                                type="button"
+                                className="text-blue-400 hover:text-blue-600 flex-shrink-0 focus:outline-none p-1.5 rounded-full"
+                                aria-label={priceStatusLabel}
                               >
-                                <span className="inline-flex items-center gap-2">
-                                  <span
-                                    className={`h-2.5 w-2.5 rounded-full ${priceStatusClass} ring-1 ring-gray-300`}
-                                    role="img"
-                                    aria-label={priceStatusLabel}
-                                    title={priceStatusLabel}
+                                <svg
+                                  className="h-3.5 w-3.5"
+                                  viewBox="0 0 20 20"
+                                  fill="currentColor"
+                                >
+                                  <path
+                                    fillRule="evenodd"
+                                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                                    clipRule="evenodd"
                                   />
-                                  <PriceDisplay
-                                    price={priceEntry.price}
-                                    currency={priceEntry.currency || "USD"}
-                                  />
-                                  {" @ "}
-                                  {storeName || priceEntry.source}
-                                </span>
-                              </PriceBreakdownTooltip>
-                            </a>
-                          ) : (
-                            <span>
-                              <PriceBreakdownTooltip
-                                price={priceEntry.price}
-                                basePrice={priceEntry.base_price}
-                                shippingCost={priceEntry.shipping_cost}
-                                fees={priceEntry.fees}
-                                currency={priceEntry.currency || "USD"}
-                                isFinalPrice={priceEntry.is_final_price}
+                                </svg>
+                              </button>
+                            </PriceBreakdownTooltip>
+                            {priceEntry.source_url ? (
+                              <a
+                                href={priceEntry.source_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 hover:text-blue-600"
                               >
-                                <span className="inline-flex items-center gap-2">
-                                  <span
-                                    className={`h-2.5 w-2.5 rounded-full ${priceStatusClass} ring-1 ring-gray-300`}
-                                    role="img"
-                                    aria-label={priceStatusLabel}
-                                    title={priceStatusLabel}
+                                <PriceDisplay
+                                  price={priceEntry.price}
+                                  currency={priceEntry.currency || "USD"}
+                                />
+                                {" @ "}
+                                {storeName || priceEntry.source}
+                                <svg
+                                  className="h-3 w-3"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
                                   />
-                                  <PriceDisplay
-                                    price={priceEntry.price}
-                                    currency={priceEntry.currency || "USD"}
-                                  />
-                                  {" @ "}
-                                  {storeName || priceEntry.source}
-                                </span>
-                              </PriceBreakdownTooltip>
-                            </span>
-                          )}
+                                </svg>
+                              </a>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5">
+                                <PriceDisplay
+                                  price={priceEntry.price}
+                                  currency={priceEntry.currency || "USD"}
+                                />
+                                {" @ "}
+                                {storeName || priceEntry.source}
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {/* Right side: Location, Time, Username, Action Buttons + Screenshot */}
@@ -1523,14 +1441,6 @@ export function ProductDetailClient({
           )}
         </div>
       </main>
-
-      {/* Location Modal */}
-      <LocationModal
-        isOpen={isLocationModalOpen}
-        onClose={() => setIsLocationModalOpen(false)}
-        onSave={handleLocationSave}
-        currentLocation={userLocation}
-      />
 
       {/* Review Modal */}
       {showReviewModal &&
