@@ -24,6 +24,7 @@ export default function PriceBreakdownTooltip({
   const [showTooltip, setShowTooltip] = useState(false);
   const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLDivElement>(null);
+  const isTouchRef = useRef(false);
 
   // Only show tooltip if we have breakdown data
   const hasBreakdown =
@@ -35,8 +36,8 @@ export default function PriceBreakdownTooltip({
     if (showTooltip && triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
       setTooltipPosition({
-        top: rect.bottom + window.scrollY + 8,
-        left: rect.left + window.scrollX,
+        top: rect.bottom + 8,
+        left: rect.left,
       });
     }
   }, [showTooltip]);
@@ -67,9 +68,19 @@ export default function PriceBreakdownTooltip({
       <div
         ref={triggerRef}
         className="relative inline-flex items-center"
-        onMouseEnter={() => setShowTooltip(true)}
-        onMouseLeave={() => setShowTooltip(false)}
-        onClick={() => setShowTooltip((prev) => !prev)}
+        onTouchStart={() => {
+          isTouchRef.current = true;
+        }}
+        onMouseEnter={() => {
+          if (!isTouchRef.current) setShowTooltip(true);
+        }}
+        onMouseLeave={() => {
+          if (!isTouchRef.current) setShowTooltip(false);
+        }}
+        onClick={() => {
+          isTouchRef.current = false;
+          setShowTooltip((prev) => !prev);
+        }}
       >
         {children}
       </div>
